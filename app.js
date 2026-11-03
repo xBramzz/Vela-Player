@@ -201,6 +201,11 @@ async function setupAudio() {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) throw new Error("Web Audio is not supported in this browser.");
   ctx = new AC({ latencyHint: "playback" });
+  /* Every value written directly to an AudioParam must be a finite number, or Chrome throws
+     "Failed to set the 'value' property on 'AudioParam': The provided float value is non-finite"
+     and the whole graph build aborts (no analyser → dead waveform). gainOf sanitises anything
+     that could arrive as NaN/undefined from persisted settings. */
+  const gainOf = (v, fallback) => (Number.isFinite(+v) ? Math.min(10, Math.max(-140, +v)) : fallback);
   /* Worklet first — createMediaElementSource must NOT exist yet, or Chrome's
      WebRTC/AEC pipeline hijacks the element and degrades pitch-shifted audio. */
   try {
@@ -213,12 +218,12 @@ async function setupAudio() {
     pitchNode = null;
     setTimeout(() => say("Pitch engine could not load — pitch shifting is off. Open Detune over http(s), not file://."), 400);
   }
-  filters = EQ_FREQS.map((f, i) => { const b = ctx.createBiquadFilter(); b.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking"; b.frequency.value = f; b.Q.value = 0.8; b.gain.value = 0; return b; });
+  filters = EQ_FREQS.map((f, i) => { const b = ctx.createBiquadFilter(); b.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking"; b.frequency.value = f; b.Q.value = 0.8; b.gain.value = gainOf(settings.eq && settings.eq[i], 0); return b; });
   compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -14; compressor.knee.value = 20; compressor.ratio.value = 2.5; compressor.attack.value = 0.008; compressor.release.value = 0.2;
   dry = ctx.createGain(); wet = ctx.createGain(); convolver = ctx.createConvolver(); master = ctx.createGain();
   analyser = ctx.createAnalyser(); analyser.fftSize = document.documentElement.classList.contains("lite") ? 2048 : 4096;
-  master.gain.value = settings.mute ? 0 : settings.volume;
+  master.gain.value = settings.mute ? 0 : gainOf(settings.volume, 0.8);
   dry.gain.value = 1; wet.gain.value = 0;
   /* smoothingTimeConstant is intentionally left at the browser default (0.8): fx.js reads
      the spectrum twice per frame — fd (smoothed, for the visual bands) and raw (freshly
@@ -256,8 +261,11 @@ async function setupAudio() {
   applySettings();
 }
 function ramp(param, value, time = 0.05) {
-  try { const now = ctx.currentTime; param.cancelScheduledValues(now); param.setTargetAtTime(value, now, time); }
-  catch { try { param.value = value; } catch { /* closed context */ } }
+  /* setTargetAtTime throws on non-finite targets — silently coerce so one bad persisted
+     value can never tear down playback. */
+  if (!param || !Number.isFinite(+value)) return;
+  try { const now = ctx.currentTime; param.cancelScheduledValues(now); param.setTargetAtTime(+value, now, Math.max(0.001, +time || 0.05)); }
+  catch { try { param.value = +value; } catch { /* closed context */ } }
 }
 function applySettings() {
   const model = C.computePlayback(settings);
@@ -460,9 +468,14 @@ async function playTrack(id, autoplay = true) {
     await setupAudio();
     if (ctx.state === "suspended") await ctx.resume();
   } catch (e) {
-    /* Audio-graph problems must never masquerade as "the file won't play" —
-       surface the real reason and keep going with whatever graph we have. */
+    /* setupAudio aborted mid-build — roll back the partial state so the NEXT attempt
+       rebuilds from scratch instead of short-circuiting on a half-wired `ctx`
+       (that stale ctx was why every track reported "Playback failed"). */
     console.error("Audio engine setup failed", e);
+    try { source?.disconnect(); } catch { /* ignore */ }
+    analyser = null;
+    if (ctx && ctx.state !== "closed") { try { await ctx.close(); } catch { /* ignore */ } }
+    ctx = null; filters = []; master = null; compressor = null; pitchNode = null;
     say(`Audio engine issue: ${e?.message || e}. Playback may be degraded.`);
   }
   try {

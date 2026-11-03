@@ -202,7 +202,10 @@
       cents: clamp(Math.round(+s.cents || 0), -1200, 1200),
       tempo: clamp(+s.tempo || 1, 0.5, 2),
       link: !!s.link,
-      volume: clamp(+s.volume ?? 0.8, 0, 1),
+      /* NOTE: `+s.volume ?? 0.8` is a latent bug — unary + binds tighter than ??, so an
+         absent volume becomes NaN (?? only catches null/undefined) and NaN propagates to
+         AudioParam.value → "non-finite" TypeError crashes setupAudio. Use Number.isFinite guards. */
+      volume: clamp(Number.isFinite(+s.volume) ? +s.volume : 0.8, 0, 1),
       mute: !!s.mute,
       reverb: clamp(+s.reverb || 0, 0, 1),
       /* Always exactly 6 bands; missing entries pad with 0 (UI indexes filters[i] positionally). */
@@ -302,7 +305,11 @@
       const thr = m * 0.25;
       for (let i = 0; i < n; i++) env[i] = env[i] > thr ? 1 : 0;
       const lagMin = Math.max(1, Math.round(fs * 60 / 200)); // 200 BPM ceiling
-      const lagMax = Math.min(n - 2, Math.round(fs * 60 / 60)); // 60 BPM floor
+      /* Hard cap the autocorrelation window at ~3.5 s (≈17 fs samples). A full 4-beat bar at
+         60 BPM is 4 s and was previously allowed as a lag; combined with the divisor scan below
+         it produced pathological runtimes on some inputs. For beatmatching, tempo octaves are
+         equivalent anyway — the fold step maps everything into 70–190 BPM. */
+      const lagMax = Math.min(n - 2, Math.round(fs * 3.5), Math.round(fs * 60 / 60));
       if (lagMax - lagMin < 2) return null;
       const ac = new Float32Array(lagMax + 2);
       for (let lag = lagMin; lag <= lagMax; lag++) {
@@ -319,23 +326,20 @@
       if (!(gmax > 0)) return null;
       const eps = gmax * 0.98;
       let best = 0;
-      for (let lag = lagMax; lag >= lagMin && !best; lag--) {
-        if (ac[lag] < eps) continue;
+      /* Only inspect lags that actually clear the threshold — on real music many near-max
+         peaks exist and the old "walk every lag, test divisors on each" was O(lagRange²/h),
+         which stalled the main thread for seconds. Candidates are collected in one pass. */
+      const cands = [];
+      for (let lag = lagMax; lag >= lagMin; lag--) if (ac[lag] >= eps) cands.push(lag);
+      for (const lag of cands) {
         let dominatedByDivisor = false;
-        /* Check every exact divisor lag q (lag = q*h): does q itself correlate strongly?
-           Bounded by q >= lagMin, so this always terminates. */
-        /* Bounded scan over candidate sub-harmonics h = 2..lag/lagMin. An unbounded
-           `for (h=2;;h++)` with `break` only on q<lagMin hung on some inputs because
-           floor(lag/h) can stall at the same value across consecutive h when lag is
-           small relative to lagMin spacing — iterate h explicitly with a hard cap. */
-        const hMax = Math.max(2, Math.floor(lag / lagMin));
+        const hMax = Math.max(1, Math.floor(lag / lagMin));   // q = lag/h ≥ lagMin ⇒ h ≤ lag/lagMin
         for (let h = 2; h <= hMax; h++) {
           const q = lag / h;
           if (q !== Math.floor(q)) continue;     // not an exact divisor
-          if (q < lagMin) break;
           if (ac[q] >= eps) { dominatedByDivisor = true; break; }
         }
-        if (!dominatedByDivisor) best = lag;
+        if (!dominatedByDivisor) { best = lag; break; }
       }
       if (!best) { best = lagMin; for (let lag = lagMin + 1; lag <= lagMax; lag++) if (ac[lag] > ac[best]) best = lag; }
       let lag = best;                                        // parabolic interpolation around the peak
