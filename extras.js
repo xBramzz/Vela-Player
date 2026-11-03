@@ -127,8 +127,13 @@ function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.cur
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
  if(v){origLoad();const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}else SHA.style.display="none";
   $("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;
+  /* pause ALL background painting while fullscreen — the shower covers everything, so the
+     waveform canvas + embers are pure wasted GPU work behind it (this was the flicker/lag) */
+  if(window.DetuneFX)DetuneFX.freeze=true;document.body.classList.add("lyrshow-open");
   shPrev=document.activeElement;SH.hidden=false;document.body.style.overflow="hidden";shRender();setTimeout(()=>{shTick(true);SHB.scrollTop=Math.max(0,(SHB.children[Math.max(shIdx,0)]?.offsetTop||0)-SHB.clientHeight/2);$("lshClose").focus()},60)}
- else{SH.hidden=true;document.body.style.overflow="";if(shPrev&&document.contains(shPrev))shPrev.focus()}}
+ else{SH.hidden=true;document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
+  if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
+ SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}
 function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}shRender()}}
 $("lshClose").onclick=()=>shOpen(false);
 SH.addEventListener("click",e=>{if(e.target===SH||e.target.classList.contains("lshower-frost")||e.target.classList.contains("lshower-bg"))shOpen(false)});
