@@ -108,13 +108,40 @@ async function fetchLrc(manual){
 $("lyrNet").onclick=()=>fetchLrc(true);
 let autoFetched=new Set();
 const origLoad=load;
-load=function(){origLoad();
+load=function(){origLoad();shSync();
  /* one automatic attempt per track per session when the panel is empty */
  if(on&&window.DetuneCore&&!raw&&hasTrack()&&navigator.onLine!==false){
   const k=key();
   if(!autoFetched.has(k)){autoFetched.add(k);setTimeout(()=>{if(!raw&&key()===k)fetchLrc(false)},400)}
  }};
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!P.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l")open(P.hidden)});
+/* ---------- full-screen lyric shower (Apple Music style) ---------- */
+const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt");let shIdx=-1,shHold=0,shPrev=null;
+function shRender(){SHB.replaceChildren();shIdx=-1;
+ if(!lines.length){const e=document.createElement("div");e.className="lshower-empty";const i0=document.createElement("i");i0.className="fa-solid fa-microphone-lines";const p0=document.createElement("p");p0.textContent="No lyrics for this track yet.";const s0=document.createElement("span");s0.textContent="Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";e.append(i0,p0,s0);SHB.append(e);return}
+ const f=document.createDocumentFragment();
+ lines.forEach((l,i)=>{const p=document.createElement("p");p.className="lyr"+(synced?" syn":"")+(l.s?"":" gap");p.textContent=l.s||"";if(synced)p.dataset.i=i;f.append(p)});
+ SHB.append(f);shTick(true)}
+function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.currentTime+.25;let i=-1;for(let k=0;k<lines.length;k++){if(lines[k].t<=t)i=k;else break}
+ if(i===shIdx&&!force)return;SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(!el)return;el.classList.add("on");
+ if(Date.now()>shHold)SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/2+el.clientHeight/2),behavior:(lite||force)?"auto":"smooth"})}
+function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
+ if(v){origLoad();const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}else SHA.style.display="none";
+  $("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;
+  shPrev=document.activeElement;SH.hidden=false;document.body.style.overflow="hidden";shRender();setTimeout(()=>{shTick(true);SHB.scrollTop=Math.max(0,(SHB.children[Math.max(shIdx,0)]?.offsetTop||0)-SHB.clientHeight/2);$("lshClose").focus()},60)}
+ else{SH.hidden=true;document.body.style.overflow="";if(shPrev&&document.contains(shPrev))shPrev.focus()}}
+function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}shRender()}}
+$("lshClose").onclick=()=>shOpen(false);
+SH.addEventListener("click",e=>{if(e.target===SH||e.target.classList.contains("lshower-frost")||e.target.classList.contains("lshower-bg"))shOpen(false)});
+SHB.addEventListener("click",e=>{const p=e.target.closest(".syn");if(!p)return;a.currentTime=Math.max(0,lines[+p.dataset.i].t-.3);shHold=0;shTick(true)});
+for(const ev of["wheel","touchmove"])SHB.addEventListener(ev,()=>shHold=Date.now()+4000,{passive:true});
+SHB.addEventListener("keydown",e=>{if(!synced)return;let n=null;
+ if(e.key==="ArrowDown")n=Math.min(lines.length-1,shIdx+1);
+ else if(e.key==="ArrowUp")n=Math.max(0,shIdx-1);
+ else if(e.key==="Home")n=0;else if(e.key==="End")n=lines.length-1;
+ else if(e.key==="Enter"&&e.target.classList.contains("syn")){e.target.click();return}
+ if(n!=null){e.preventDefault();const el=SHB.children[n];if(el){a.currentTime=Math.max(0,lines[n].t-.3);shHold=0;shTick(true)}}});
+a.addEventListener("timeupdate",()=>shTick());a.addEventListener("seeked",()=>shTick(true));
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH.hidden){shOpen(false);e.stopPropagation();return}if(e.key==="Escape"&&!P.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l"){if(!SH.hidden){shOpen(false);return}shOpen(SH.hidden)}});
 $("shortcuts").querySelector("ul").insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
 load();
 })();
