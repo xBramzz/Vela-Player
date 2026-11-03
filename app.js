@@ -354,6 +354,36 @@ function xfadeWillTakeOver() {
   const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
   return !!(pick && pick.id !== currentId && trackById(pick.id)?.blob);
 }
+/* Promote deck B to deck A after a fade OR an emergency handoff. */
+async function promoteDeckB() {
+  const id = xfade.idB;
+  killDeckB();                               /* pauses B, revokes URL, clears active/busy/armedId */
+  audio.volume = 1;                          /* master gain handles real volume */
+  if (!id) return false;
+  await commitTrack(id, true);
+  return true;
+}
+/* Emergency handoff: deck A reached its end while a crossfade was armed but never
+   completed (deck-B preload raced the final timeupdate tick). Deck B ALREADY has the
+   next track loaded and often pre-played silently — ramp it up instead of advancing.
+   This is the actual fix for "last song restarts after crossfade": the old code fell
+   back to advance()→playTrack(), which reloaded a fresh object URL of the SAME blob
+   and autoplayed it from 0:00 whenever deck A's ended event fired mid-reload. */
+let bailAt = -1e9;
+function bailToDeckB() {
+  if (!xfade.urlB || !xfade.idB) return false;
+  cancelAnimationFrame(xfade.raf); xfade.raf = 0;
+  xfade.active = false; xfade.busy = false;
+  window.__detuneXfade = false;
+  const id = xfade.idB;
+  const finish = async () => {
+    try { audioB.volume = 1; } catch { /* ignore */ }
+    await promoteDeckB();
+  };
+  if (audioB.paused) { Promise.resolve(audioB.play()).then(finish, finish); return true; }
+  finish();
+  return true;
+}
 function armXfade() {                       /* called from timeupdate near the end of a track */
   const secs = settings.crossfade;
   if (!secs || !ctx || !currentId || repeat === "one" || (loopA !== null && loopB !== null)) return;
@@ -377,7 +407,7 @@ function armXfade() {                       /* called from timeupdate near the e
     if (now - xfade.lastArmAt < 3000) return;
     xfade.lastArmAt = now;
     killDeckB(); audio.volume = 1;
-    if (!advance(1)) say("Track ended.");
+    if (!advanceNoXfade(1)) say("Track ended.");
     return;
   }
   xfade.armedId = currentId;
@@ -437,15 +467,10 @@ function runXfade() {
   });
 }
 function finishXfade() {
-  const id = xfade.idB;
-  killDeckB();                               /* pauses B, revokes URL, clears active/busy/armedId */
-  audio.volume = 1;                          /* master gain handles real volume */
-  if (!id) return;
-  /* Promote deck B to deck A. IMPORTANT: commitTrack() calls audio.load(), which
-     CANCELS deck A's pending "ended" event — if we didn't autoplay here, the promoted
-     track would sit paused at 0:00 forever (the old bug that made the last song appear
-     to "restart" when the user pressed play again). */
-  Promise.resolve(commitTrack(id, true)).catch(e => { console.warn("Crossfade promotion failed", e); advance(1); });
+  /* Promote deck B to deck A. commitTrack() calls audio.load(), which CANCELS deck A's
+     pending "ended" event, so the promoted track never re-triggers the ended handler. */
+  promoteDeckB().then(ok => { if (!ok) advanceNoXfade(1); })
+    .catch(e => { console.warn("Crossfade promotion failed", e); advanceNoXfade(1); });
 }
 function bailXfade() {                       /* user took manual control mid-fade */
   if (!xfade.active && !xfade.busy) return;
@@ -532,6 +557,15 @@ function countPlay(id) {
   stats.plays[id] = (stats.plays[id] || 0) + 1;
   stats.recent = [id, ...stats.recent.filter(x => x !== id)].slice(0, 40);
   metaSetSoon("stats", () => stats, 4000); // batch writes — no hammering on every play
+}
+/* advance() for crossfade-internal paths: NEVER re-arm the fade engine, otherwise a
+   promotion failure loops (advance → armXfade → startCrossfade → ended → advance …). */
+function advanceNoXfade(dir = 1) {
+  const ids = currentList().map(t => t.id);
+  const pick = C.pickNext(ids, currentId, { dir, shuffle, repeat });
+  if (!pick || pick.id === currentId) { if (dir > 0 && !pick) say("End of playlist."); return false; }
+  playTrack(pick.id, true);
+  return true;
 }
 function advance(dir = 1) {
   const ids = currentList().map(t => t.id);
@@ -687,21 +721,58 @@ async function exportWav() {
     const gain = off.createGain(); gain.gain.value = settings.mute ? 0 : settings.volume;
     src.connect(gain); gain.connect(off.destination); src.start();
     const rendered = await off.startRendering();
-    const wav = encodeWav(rendered);
-    const a = document.createElement("a"); a.href = safeURL(wav); a.download = `${t.title.replace(/[\\/:*?"<>|]/g, "_")}-detuned.wav`; a.click();
+    /* "Detuned ---hz" tag: the real pitch shift applied to this render, in Hz at A4. */
+    const hz = settings.cents * (440 / 1200);
+    const detuneTag = `Detuned ${hz >= 0 ? "+" : ""}${hz.toFixed(1)}Hz`;
+    const base = (t.title || t.name || "track").replace(/[\\/:*?"<>|]/g, "_").trim() || "track";
+    const wav = encodeWav(rendered, { title: t.title, artist: t.artist, album: t.album, comment: `${base} (${detuneTag})` });
+    const a = document.createElement("a"); a.href = safeURL(wav); a.download = `${base} (${detuneTag}).wav`.slice(0, 150); a.click();
     setTimeout(() => revoke(a.href), 30000);
-    say("WAV exported. Note: offline export bakes in speed and volume only — live pitch/EQ/reverb are not included.");
+    say(`WAV exported as "${base} (${detuneTag})" with embedded ID3 metadata. Offline export bakes in speed and volume only — live pitch/EQ/reverb are not included.`);
   } catch (e) { audioError(e); } finally { button.disabled = false; }
 }
-function encodeWav(buffer) {
-  const channels = buffer.numberOfChannels, len = buffer.length, bytes = 44 + len * channels * 2;
+/* RIFF INFO chunks (LIST/INFO with INAM/IART/IPRD/ICMT) — natively read by Windows
+   Explorer, iTunes and most desktop players from plain .wav files. */
+function writeInfoChunks(v, o, meta) {
+  const pairs = [["INAM", meta.title], ["IART", meta.artist], ["IPRD", meta.album], ["ICMT", meta.comment]].filter(p => p[1]);
+  if (!pairs.length) return o;
+  let size = 4;                                   /* "INFO" fourcc */
+  const pads = [];
+  for (const [id, val] of pairs) {
+    const bytesLen = new TextEncoder().encode(String(val)).length + 1;
+    const pad = bytesLen % 2; pads.push(pad); size += 8 + bytesLen + pad;
+  }
+  const str = (pos, s) => { for (let i = 0; i < s.length; i++) v.setUint8(pos + i, s.charCodeAt(i)); };
+  str(o, "LIST"); v.setUint32(o + 4, size, true); str(o + 8, "INFO"); o += 12;
+  let pi = 0;
+  for (const [id, val] of pairs) {
+    const raw = new TextEncoder().encode(String(val));
+    str(o, id); v.setUint32(o + 4, raw.length + 1, true);
+    v.setUint8Array ? v.setUint8Array(o + 8, raw) : new Uint8Array(v.buffer, o + 8, raw.length).set(raw);
+    v.setUint8(o + 8 + raw.length, 0);            /* NUL-terminate */
+    o += 8 + raw.length + 1 + (pads[pi++] || 0);
+  }
+  return o;
+}
+function encodeWav(buffer, meta = {}) {
+  const channels = buffer.numberOfChannels, len = buffer.length;
+  const dataBytes = len * channels * 2;
+  const infoBytes = (() => {                    /* measure LIST/INFO size first */
+    const pairs = [[meta.title], [meta.artist], [meta.album], [meta.comment]].filter(p => p[0]);
+    if (!pairs.length) return 0;
+    let s = 4; for (const [v0] of pairs) { const l = new TextEncoder().encode(String(v0)).length + 1; s += 8 + l + (l % 2); }
+    return 8 + s;                               /* LIST header + size + contents */
+  })();
+  const bytes = 44 + infoBytes + dataBytes;
   const ab = new ArrayBuffer(bytes), v = new DataView(ab);
   const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
   str(0, "RIFF"); v.setUint32(4, bytes - 8, true); str(8, "WAVE"); str(12, "fmt ");
   v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
   v.setUint32(24, buffer.sampleRate, true); v.setUint32(28, buffer.sampleRate * channels * 2, true);
-  v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, bytes - 44, true);
-  let o = 44;
+  v.setUint16(32, channels * 2, true); v.setUint16(34, 16, true);
+  let o = 36;
+  if (infoBytes) o = writeInfoChunks(v, o, meta);
+  str(o, "data"); v.setUint32(o + 4, dataBytes, true); o += 8;
   for (let i = 0; i < len; i++) for (let ch = 0; ch < channels; ch++) { const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i])); v.setInt16(o, s < 0 ? s * 32768 : s * 32767, true); o += 2; }
   return new Blob([ab], { type: "audio/wav" });
 }
@@ -799,31 +870,41 @@ function wire() {
   audio.addEventListener("ended", () => {
     if (xfade.active || xfade.busy) return;   /* deck B already owns the transition */
     const idAtEnd = currentId;                /* guard against re-entrant/stale ended events */
-    /* THE RESTART BUG: <audio>.play() on a track that has fully ended reloads it from 0:00.
-       advance()/commitTrack can resolve to the SAME id (repeat "all" on a one-track list,
-       shuffle picking the same song, stale closure after a quick seek). If the target is
-       this very element's finished src, PAUSE + reset instead — never replay it. */
-    const sameSrcTarget = (pick) => pick && pick.id === idAtEnd;
+    /* THE RESTART BUG (root cause): every fallback path that called advance() →
+       playTrack() → commitTrack() could resolve to the SAME finished track (repeat-all
+       on a one-track list, shuffle re-picking it, or a stale pick), and <audio>.play()
+       on a src that just ended reloads it from 0:00 — visibly "the song starts over".
+       Hard rule: after an `ended`, we NEVER auto-play idAtEnd again unless repeat-one
+       was explicitly requested. Anything else either hands off to deck B, advances to a
+       DIFFERENT track, or stops cleanly. */
+    let suppressFor = 0;                      /* ms of ended-suppression for idAtEnd */
+    const suppressEnded = (id, ms) => { if (id) suppressFor = Math.max(suppressFor, performance.now() + ms); };
     if (xfade.armedId === currentId && xfadeWillTakeOver()) {
-      /* Crossfade was supposed to take over but never armed (deck-B preload failed, tab
-         was hidden for the whole tail, etc). Fallback: hand off via a NORMAL track change
-         — NEVER replay the same src, which is what made the last song restart. */
-      setTimeout(() => { if (currentId === idAtEnd && !xfade.active && !xfade.busy && audio.ended) { killDeckB(); audio.volume = 1; if (repeat !== "one" && !advance(1)) say("Track ended."); } }, 400);
+      /* Crossfade armed but never completed (deck-B preload raced the last ticks).
+         Deck B usually already has the next song loaded & pre-played → hand off to it.
+         Only if deck B is unusable do we fall back to a NORMAL advance. */
+      setTimeout(() => {
+        if (currentId !== idAtEnd || xfade.active || xfade.busy || !audio.ended) return;
+        if (bailToDeckB()) return;            /* promotes deck B; commitTrack cancels any stray ended */
+        killDeckB(); audio.volume = 1;
+        if (repeat !== "one" && !advanceNoXfade(1)) say("Track ended.");
+      }, 250);
       return;
     }
     killDeckB();                              /* deck B can no longer leak sound */
     audio.volume = 1;                         /* undo any partial fade ramp before next play */
+    if (performance.now() < suppressFor && idAtEnd === currentId) return; /* already handled */
     if (repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
     const ids = currentList().map(t => t.id);
     const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
-    if (!pick || sameSrcTarget(pick)) {
-      /* Nothing new to move to (end of playlist, or the "next" resolves to this same
-         finished track): STOP cleanly. Do NOT call advance() → playTrack() here, because
-         reloading the identical src and autoplaying it is exactly the visible restart. */
-      audio.pause(); audio.currentTime = 0;
+    if (!pick || pick.id === idAtEnd) {
+      /* Nothing NEW to move to (end of playlist, or "next" resolves to this same
+         finished track): STOP cleanly at the end position. Do NOT pause+reset to 0:00 —
+         rewinding made it LOOK like a restart when anything re-triggered play. */
       say(pick ? "Track ended." : "End of playlist.");
       return;
     }
+    suppressEnded(idAtEnd, 1500);             /* belt-and-braces: swallow duplicate ended events */
     playTrack(pick.id, true);
   });
   audio.addEventListener("error", () => { if (audio.src) say("This audio could not be played. Try a different file."); });
