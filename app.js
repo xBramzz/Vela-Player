@@ -213,20 +213,13 @@ async function setupAudio() {
     pitchNode = null;
     setTimeout(() => say("Pitch engine could not load — pitch shifting is off. Open Detune over http(s), not file://."), 400);
   }
-  source = ctx.createMediaElementSource(audio);
-  /* Deck B gets its own pitch node so the worklet delay-line resets cleanly per track —
-     no stale tail of the previous song bleeding into the crossfade. */
-  if (pitchNode) {
-    try { pitchB = new AudioWorkletNode(ctx, "detune-pitch", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", outputChannelCount: [2] }); } catch (e) { console.warn("Deck B pitch node unavailable", e); pitchB = null; }
-  }
-  sourceB = ctx.createMediaElementSource(audioB);
-  { let nb = sourceB; if (pitchB) { nb.connect(pitchB); nb = pitchB; } nb.connect(master); }
-  audioB.volume = 0;   /* deck B is silent unless a crossfade explicitly raises it */
   filters = EQ_FREQS.map((f, i) => { const b = ctx.createBiquadFilter(); b.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking"; b.frequency.value = f; b.Q.value = 0.8; b.gain.value = 0; return b; });
   compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -14; compressor.knee.value = 20; compressor.ratio.value = 2.5; compressor.attack.value = 0.008; compressor.release.value = 0.2;
   dry = ctx.createGain(); wet = ctx.createGain(); convolver = ctx.createConvolver(); master = ctx.createGain();
   analyser = ctx.createAnalyser(); analyser.fftSize = document.documentElement.classList.contains("lite") ? 2048 : 4096;
+  master.gain.value = settings.mute ? 0 : settings.volume;
+  dry.gain.value = 1; wet.gain.value = 0;
   /* smoothingTimeConstant is intentionally left at the browser default (0.8): fx.js reads
      the spectrum twice per frame — fd (smoothed, for the visual bands) and raw (freshly
      computed, used as an un-smoothed transient source for kick detection). Setting it low
@@ -234,12 +227,26 @@ async function setupAudio() {
   const len = Math.floor(ctx.sampleRate * 1.8), imp = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) { const d = imp.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); }
   convolver.buffer = imp;
+  /* Deck B gets its own pitch node so the worklet delay-line resets cleanly per track —
+     no stale tail of the previous song bleeding into the crossfade. */
+  if (pitchNode) {
+    try { pitchB = new AudioWorkletNode(ctx, "detune-pitch", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", outputChannelCount: [2] }); } catch (e) { console.warn("Deck B pitch node unavailable", e); pitchB = null; }
+  }
+  /* createMediaElementSource can throw InvalidStateError if called twice on one element
+     (e.g. a retried setup after a partial failure) — guard each call. */
+  try { source = ctx.createMediaElementSource(audio); } catch (e) { console.warn("Deck A already bound to audio graph", e); }
+  try { sourceB = ctx.createMediaElementSource(audioB); } catch (e) { console.warn("Deck B already bound to audio graph", e); }
   /* Chain: source → [worklet] → EQ×6 → compressor → dry+reverb(wet) → master → destination
+            deckB → [workletB] → same compressor tap (crossfaded via element volume)
             compressor → analyser → (zero-gain sink so the analyser never feeds audible output twice) */
   let n = source;
   if (pitchNode) { n.connect(pitchNode); n = pitchNode; }
   for (const f of filters) { n.connect(f); n = f; }
   n.connect(compressor);
+  /* Deck B joins the chain AFTER the EQ so a re-ordered deck doesn't double-filter,
+     but BEFORE the compressor so both decks share one gain-staging path. */
+  if (sourceB) { let nb = sourceB; if (pitchB) { nb.connect(pitchB); nb = pitchB; } nb.connect(compressor); }
+  audioB.volume = 0;   /* deck B is silent unless a crossfade explicitly raises it */
   compressor.connect(dry); dry.connect(master);
   compressor.connect(convolver); convolver.connect(wet); wet.connect(master);
   master.connect(ctx.destination);
@@ -452,13 +459,19 @@ async function playTrack(id, autoplay = true) {
   try {
     await setupAudio();
     if (ctx.state === "suspended") await ctx.resume();
+  } catch (e) {
+    /* Audio-graph problems must never masquerade as "the file won't play" —
+       surface the real reason and keep going with whatever graph we have. */
+    console.error("Audio engine setup failed", e);
+    say(`Audio engine issue: ${e?.message || e}. Playback may be degraded.`);
+  }
+  try {
     bailXfade();                 /* manual selection overrides any in-flight fade */
     await commitTrack(id, autoplay);
     say(autoplay ? `Playing ${t.title}` : `Loaded ${t.title}. Press Play to start.`);
   } catch (e) {
     if (e?.name === "NotAllowedError") say("Playback needs a tap on Play in this browser.");
-    else say(`Playback failed for ${t.title}. Try another file.`);
-    console.error(e);
+    else { say(`Playback failed for ${t.title}: ${e?.message || e}`); console.error(e); }
   }
 }
 function countPlay(id) {
