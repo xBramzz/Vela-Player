@@ -193,7 +193,7 @@ function renderPlaylists() {
 }
 
 /* ------------------------------------------------------------------ audio engine */
-let ctx = null, source = null, sourceB = null, pitchNode = null, pitchB = null, filters = [], compressor = null, master = null, analyser = null, dry = null, wet = null, convolver = null;
+let ctx = null, source = null, pitchNode = null, filters = [], compressor = null, master = null, analyser = null, dry = null, wet = null, convolver = null;
 const EQ_FREQS = C.EQ_FREQS; // [60,170,350,1000,3500,10000]
 
 async function setupAudio() {
@@ -232,26 +232,20 @@ async function setupAudio() {
   const len = Math.floor(ctx.sampleRate * 1.8), imp = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let ch = 0; ch < 2; ch++) { const d = imp.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); }
   convolver.buffer = imp;
-  /* Deck B gets its own pitch node so the worklet delay-line resets cleanly per track —
-     no stale tail of the previous song bleeding into the crossfade. */
-  if (pitchNode) {
-    try { pitchB = new AudioWorkletNode(ctx, "detune-pitch", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", outputChannelCount: [2] }); } catch (e) { console.warn("Deck B pitch node unavailable", e); pitchB = null; }
-  }
   /* createMediaElementSource can throw InvalidStateError if called twice on one element
-     (e.g. a retried setup after a partial failure) — guard each call. */
+     (e.g. a retried setup after a partial failure) — guard each call. Deck B is NOT
+     bound this way any more (see bindDeckB): media-element routing into a rebuilt graph
+     was unreliable and silenced the fade-in deck. */
   try { source = ctx.createMediaElementSource(audio); } catch (e) { console.warn("Deck A already bound to audio graph", e); }
-  try { sourceB = ctx.createMediaElementSource(audioB); } catch (e) { console.warn("Deck B already bound to audio graph", e); }
   /* Chain: source → [worklet] → EQ×6 → compressor → dry+reverb(wet) → master → destination
-            deckB → [workletB] → same compressor tap (crossfaded via element volume)
+            deckB → browser media pipeline (audible, volume-ramped) + stream tap → bAnalyser
             compressor → analyser → (zero-gain sink so the analyser never feeds audible output twice) */
   let n = source;
   if (pitchNode) { n.connect(pitchNode); n = pitchNode; }
   for (const f of filters) { n.connect(f); n = f; }
   n.connect(compressor);
-  /* Deck B joins the chain AFTER the EQ so a re-ordered deck doesn't double-filter,
-     but BEFORE the compressor so both decks share one gain-staging path. */
-  if (sourceB) { let nb = sourceB; if (pitchB) { nb.connect(pitchB); nb = pitchB; } nb.connect(compressor); }
   audioB.volume = 0;   /* deck B is silent unless a crossfade explicitly raises it */
+  bindDeckB();         /* visualiser-only feed for deck B (never audible through ctx) */
   compressor.connect(dry); dry.connect(master);
   compressor.connect(convolver); convolver.connect(wet); wet.connect(master);
   master.connect(ctx.destination);
@@ -314,9 +308,27 @@ let audioUrl = null;
    pitch worklet → master), and ramp gains on an equal-power curve via rAF.
    If the user dragged the Crossfade slider during playback, xfade.pending picks
    up the new length at the next transition. Repeat-one / A–B loops never fade. */
-const xfade = { active: false, raf: 0, t0: 0, dur: 6, urlB: null, idB: null, mul: 1, rateB: 1, pending: null, busy: false, armedId: null };
+const xfade = { active: false, raf: 0, t0: 0, dur: 6, urlB: null, idB: null, mul: 1, rateB: 1, pending: null, busy: false, armedId: null, lastArmAt: -1e9 };
 const bpmCache = new Map();     // trackId -> bpm | null (session only — no DB churn)
 const bpmBusy = new Set();
+/* Deck B is intentionally NOT bound with createMediaElementSource. That API routes
+   the element's output into the Web Audio graph and away from the normal media
+   pipeline — but our graph rebuilds (setupAudio retries) can leave deck B silent or
+   double-routed, which was why crossfades "didn't work" and the finished song
+   reloaded/restarted on its `ended` event. Instead deck B plays through the browser
+   media pipeline (audible, volume-ramped for the fade) and feeds the VISUALIZER via
+   a MediaStreamDestination → MediaStreamSource tap that never touches ctx.destination. */
+let bAnalyser = null;           /* analyser fed by deck B's stream tap */
+function bindDeckB() {
+  try {
+    if (!ctx || typeof audioB.captureStream !== "function") return;
+    const ms = audioB.captureStream();
+    const tap = ctx.createMediaStreamSource(ms);
+    bAnalyser = ctx.createAnalyser(); bAnalyser.fftSize = 2048;
+    tap.connect(bAnalyser);       /* analyser is a sink — nothing here reaches destination */
+    window.DetuneFX && (DetuneFX.analyserB = bAnalyser);
+  } catch (e) { console.warn("Deck B visualiser tap unavailable", e); bAnalyser = null; }
+}
 function xfadeUI() {
   const s = $("xfade"), v = $("xfadeVal");
   if (s && +s.value !== settings.crossfade) s.value = settings.crossfade;
@@ -330,6 +342,7 @@ function killDeckB() {                        /* stop + unload deck B, revoke it
   audioB.removeAttribute("src"); audioB.load();
   xfade.urlB = null; xfade.idB = null; xfade.mul = 1;
   xfade.active = false; xfade.busy = false; xfade.armedId = null;
+  window.__detuneXfade = false;   /* visualiser switches back to deck A */
 }
 function stopXfade() { killDeckB(); }
 /* Would a crossfade legitimately take over this transition? Used by the ended
@@ -349,9 +362,26 @@ function armXfade() {                       /* called from timeupdate near the e
   if (audio.paused || !Number.isFinite(audio.duration)) return;
   if (loopA !== null && audio.currentTime < loopA) return;
   const remain = (loopB !== null ? loopB : audio.duration) - audio.currentTime;
-  if (!(remain > 0.25) || remain > secs) return;
+  /* Arm when we're inside the fade window, but leave ≥1.5 s of runway so the deck-B
+     preload + beatmatch decode can finish BEFORE deck A truly ends. The old condition
+     (remain ≤ secs) armed only on the very last tick — with `timeupdate`'s ~250 ms
+     granularity and a slow preload it frequently missed entirely, deck A fired its
+     native `ended`, and the fallback reloaded the same src → the "song restarts after
+     crossfade" bug. */
+  if (!(remain > 1.5) || remain > secs + 4) return;
   if (xfade.armedId === currentId) return;  /* already tried this transition — don't re-arm every tick */
+  /* Safety net: if we're deep in the window and nothing has armed yet (e.g. hidden tab),
+     do a NORMAL advance rather than letting the element's own `ended` reload the src. */
+  if (remain <= Math.max(0.6, secs * 0.5)) {
+    const now = performance.now();
+    if (now - xfade.lastArmAt < 3000) return;
+    xfade.lastArmAt = now;
+    killDeckB(); audio.volume = 1;
+    if (!advance(1)) say("Track ended.");
+    return;
+  }
   xfade.armedId = currentId;
+  xfade.lastArmAt = performance.now();
   const ids = currentList().map(t => t.id);
   const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
   if (!pick || pick.id === currentId) return;   /* last track / repeat-one style end → let it just stop */
@@ -360,7 +390,7 @@ function armXfade() {                       /* called from timeupdate near the e
   Promise.resolve(startCrossfade(nt)).catch(e => { console.warn("Crossfade aborted", e); if (xfade.busy) { xfade.busy = false; audio.volume = 1; } });
 }
 async function startCrossfade(nt) {
-  const dur = xfade.pending != null ? xfade.pending : settings.crossfade;
+  const dur = Math.min(xfade.pending != null ? xfade.pending : settings.crossfade, Math.max(1.5, (loopB !== null ? loopB : audio.duration) - audio.currentTime));
   xfade.pending = null;
   const model = C.computePlayback(settings);
   const effRate = settings.link ? clamp(model.elementRatio * (settings.tempo || 1), 0.0625, 4) : model.rate;
@@ -393,6 +423,7 @@ async function startCrossfade(nt) {
   if (ctx.state === "suspended") await ctx.resume();
   await audioB.play().catch(() => {});      /* autoplay policy already satisfied by deck A playing */
   xfade.t0 = performance.now(); xfade.active = true;
+  window.__detuneXfade = true;    /* fx.js follows the incoming deck now */
   runXfade();
 }
 function runXfade() {
@@ -409,7 +440,12 @@ function finishXfade() {
   const id = xfade.idB;
   killDeckB();                               /* pauses B, revokes URL, clears active/busy/armedId */
   audio.volume = 1;                          /* master gain handles real volume */
-  if (id) commitTrack(id, true);             /* promote deck B to deck A — seamless */
+  if (!id) return;
+  /* Promote deck B to deck A. IMPORTANT: commitTrack() calls audio.load(), which
+     CANCELS deck A's pending "ended" event — if we didn't autoplay here, the promoted
+     track would sit paused at 0:00 forever (the old bug that made the last song appear
+     to "restart" when the user pressed play again). */
+  Promise.resolve(commitTrack(id, true)).catch(e => { console.warn("Crossfade promotion failed", e); advance(1); });
 }
 function bailXfade() {                       /* user took manual control mid-fade */
   if (!xfade.active && !xfade.busy) return;
@@ -762,11 +798,33 @@ function wire() {
      preload failed) the old song must simply STOP — never restart itself. */
   audio.addEventListener("ended", () => {
     if (xfade.active || xfade.busy) return;   /* deck B already owns the transition */
-    if (xfade.armedId === currentId && xfadeWillTakeOver()) return; /* slow preload still in flight */
+    const idAtEnd = currentId;                /* guard against re-entrant/stale ended events */
+    /* THE RESTART BUG: <audio>.play() on a track that has fully ended reloads it from 0:00.
+       advance()/commitTrack can resolve to the SAME id (repeat "all" on a one-track list,
+       shuffle picking the same song, stale closure after a quick seek). If the target is
+       this very element's finished src, PAUSE + reset instead — never replay it. */
+    const sameSrcTarget = (pick) => pick && pick.id === idAtEnd;
+    if (xfade.armedId === currentId && xfadeWillTakeOver()) {
+      /* Crossfade was supposed to take over but never armed (deck-B preload failed, tab
+         was hidden for the whole tail, etc). Fallback: hand off via a NORMAL track change
+         — NEVER replay the same src, which is what made the last song restart. */
+      setTimeout(() => { if (currentId === idAtEnd && !xfade.active && !xfade.busy && audio.ended) { killDeckB(); audio.volume = 1; if (repeat !== "one" && !advance(1)) say("Track ended."); } }, 400);
+      return;
+    }
     killDeckB();                              /* deck B can no longer leak sound */
     audio.volume = 1;                         /* undo any partial fade ramp before next play */
     if (repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
-    if (!advance(1)) say("Track ended.");     /* advance()→playTrack() would reload+replay the same src */
+    const ids = currentList().map(t => t.id);
+    const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
+    if (!pick || sameSrcTarget(pick)) {
+      /* Nothing new to move to (end of playlist, or the "next" resolves to this same
+         finished track): STOP cleanly. Do NOT call advance() → playTrack() here, because
+         reloading the identical src and autoplaying it is exactly the visible restart. */
+      audio.pause(); audio.currentTime = 0;
+      say(pick ? "Track ended." : "End of playlist.");
+      return;
+    }
+    playTrack(pick.id, true);
   });
   audio.addEventListener("error", () => { if (audio.src) say("This audio could not be played. Try a different file."); });
   audio.addEventListener("timeupdate", () => {

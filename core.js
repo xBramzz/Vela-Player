@@ -261,99 +261,140 @@
      Steps: lowpass ~200 Hz → envelope (rectify + 50 Hz lowpass) → 40 Hz highpass to strip
      the DC bias (this is what makes sustained bass count as energy instead of "beats") →
      normalise → autocorrelation over 70–190 BPM → parabolic peak interpolation. */
+  /* ---------- onset envelope (shared by the autocorrelation + comb-filter passes) ---------- */
+  function bpmEnvelope(buffer) {
+    const sr = buffer.sampleRate;
+    const chA = buffer.getChannelData(0);
+    const chB = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+    const win = Math.min(chA.length, Math.floor(sr * 30)); // analyse first 30 s — plenty for tempo
+    const fs = sr / 8;                                     // decimate ×8 (e.g. 44.1k → 5.5125 kHz)
+    const n = Math.floor(win / 8);
+    if (n < fs) return null;                               // under one second of audio
+    /* 8× decimation lowpass (~Nyquist/8 ≈ 550 Hz @44.1k) — kills aliasing before downsample */
+    const taps = 17, h = new Float32Array(taps);
+    { let s = 0; const fc = 0.115;
+      for (let i = 0; i < taps; i++) { const x = i - (taps >> 1); h[i] = x === 0 ? 2 * fc : Math.sin(Math.PI * fc * x) / (Math.PI * x); }
+      for (let i = 0; i < taps; i++) { const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (taps - 1)); h[i] *= w; s += h[i]; }
+      for (let i = 0; i < taps; i++) h[i] /= s; }
+    const env = new Float32Array(n);
+    /* Kick-band envelope: two cascaded one-pole lowpass ≈150 Hz @5.5 kHz (state persists
+       across every sample), rectified, RMS per decimated frame, then a DC-blocking HPF so
+       a sustained sub-bass drone counts as *energy*, not as beats. */
+    const aLP = 1 - Math.exp(-2 * Math.PI * 150 / fs);
+    const aHP = Math.exp(-2 * Math.PI * 40 / fs);          // one-pole HPF ≈40 Hz @5.5 kHz
+    let lp1 = 0, lp2 = 0, xPrev = 0, yPrev = 0;
+    for (let i = 0; i < n; i++) {
+      const base = i * 8;
+      let acc = 0;
+      for (let j = 0; j < 8; j++) {
+        const k = base + j; if (k >= win) break;
+        let x = chA[k]; if (chB) x = (x + chB[k]) * 0.5;   // mono sum keeps stereo decks fair
+        lp1 += aLP * (x - lp1); lp2 += aLP * (lp1 - lp2);
+        acc += lp2 * lp2;                                  // rectify: energy of the kick band
+      }
+      const e = Math.sqrt(acc / 8);
+      const dc = e - xPrev + yPrev;                        // HPF difference equation
+      xPrev = e; yPrev = dc;
+      env[i] = dc > 0 ? dc : 0;                            // keep onsets only
+    }
+    let m = 0; for (let i = 0; i < n; i++) m += env[i]; m /= n;
+    if (!(m > 1e-7)) return null;                          // silence → no guess
+    return { env, n, fs };
+  }
+
   function estimateBpm(buffer) {
     try {
       if (!buffer || !buffer.length || !buffer.sampleRate) return null;
-      const sr = buffer.sampleRate;
-      const chA = buffer.getChannelData(0);
-      const chB = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
-      const win = Math.min(chA.length, Math.floor(sr * 30)); // analyse first 30 s — plenty for tempo
-      const fs = sr / 8;                                     // decimate ×8 (e.g. 44.1k → 5.5125 kHz)
-      const n = Math.floor(win / 8);
-      if (n < fs) return null;                               // under one second of audio
-      /* 8× decimation lowpass (~Nyquist/8 ≈ 550 Hz @44.1k) — kills aliasing before downsample */
-      const taps = 17, h = new Float32Array(taps);
-      { let s = 0; const fc = 0.115;
-        for (let i = 0; i < taps; i++) { const x = i - (taps >> 1); h[i] = x === 0 ? 2 * fc : Math.sin(Math.PI * fc * x) / (Math.PI * x); }
-        for (let i = 0; i < taps; i++) { const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (taps - 1)); h[i] *= w; s += h[i]; }
-        for (let i = 0; i < taps; i++) h[i] /= s; }
-      const env = new Float32Array(n);
-      /* Kick-band envelope: two cascaded one-pole lowpass ≈150 Hz @5.5 kHz (state persists
-         across every sample), rectified, RMS per decimated frame, then a DC-blocking HPF so
-         a sustained sub-bass drone counts as *energy*, not as beats. */
-      const aLP = 1 - Math.exp(-2 * Math.PI * 150 / fs);
-      const aHP = Math.exp(-2 * Math.PI * 40 / fs);          // one-pole HPF ≈40 Hz @5.5 kHz
-      let lp1 = 0, lp2 = 0, xPrev = 0, yPrev = 0;
-      for (let i = 0; i < n; i++) {
-        const base = i * 8;
-        let acc = 0;
-        for (let j = 0; j < 8; j++) {
-          const k = base + j; if (k >= win) break;
-          let x = chA[k]; if (chB) x = (x + chB[k]) * 0.5;   // mono sum keeps stereo decks fair
-          lp1 += aLP * (x - lp1); lp2 += aLP * (lp1 - lp2);
-          acc += lp2 * lp2;                                  // rectify: energy of the kick band
+      const E = bpmEnvelope(buffer);
+      if (!E) return null;
+      let env = E.env, n = E.n; const fs = E.fs;
+
+      /* ---- onset thinning: collapse each envelope hump to its peak sample so sustained
+         bass wobble / hi-hat buzz counts as ONE hit per beat, not many. ---- */
+      {
+        const mm = (() => { let v = 0; for (let i = 0; i < n; i++) if (env[i] > v) v = env[i]; return v; })();
+        if (!(mm > 0)) return null;
+        const thr = mm * 0.15, minGap = Math.max(1, Math.round(fs * 60 / 200)); // \u2264200 BPM hits
+        const thinned = new Float32Array(n);
+        let lastPeak = -minGap - 1, runMax = 0, runIdx = -1;
+        for (let i = 0; i < n; i++) {
+          if (env[i] >= thr) {
+            if (env[i] > runMax) { runMax = env[i]; runIdx = i; }
+          } else if (runIdx >= 0) {
+            if (runIdx - lastPeak >= minGap) { thinned[runIdx] = 1; lastPeak = runIdx; }
+            runMax = 0; runIdx = -1;
+          }
         }
-        const e = Math.sqrt(acc / 8);
-        const dc = e - xPrev + yPrev;                        // HPF difference equation
-        xPrev = e; yPrev = dc;
-        env[i] = dc > 0 ? dc : 0;                            // keep onsets only
+        if (runIdx >= 0 && runIdx - lastPeak >= minGap) thinned[runIdx] = 1;
+        let hits = 0; for (let i = 0; i < n; i++) hits += thinned[i];
+        if (hits < 4) return null;                       // no real pulse in this window
+        env = thinned;
       }
-      let m = 0; for (let i = 0; i < n; i++) m += env[i]; m /= n;
-      if (!(m > 1e-7)) return null;                          // silence → no guess
-      /* Adaptive binarisation (~25% of mean onset height): makes autocorrelation fire on the
-         KICK pulse instead of riding the continuous bassline wobble. */
-      const thr = m * 0.25;
-      for (let i = 0; i < n; i++) env[i] = env[i] > thr ? 1 : 0;
-      const lagMin = Math.max(1, Math.round(fs * 60 / 200)); // 200 BPM ceiling
-      /* Hard cap the autocorrelation window at ~3.5 s (≈17 fs samples). A full 4-beat bar at
-         60 BPM is 4 s and was previously allowed as a lag; combined with the divisor scan below
-         it produced pathological runtimes on some inputs. For beatmatching, tempo octaves are
-         equivalent anyway — the fold step maps everything into 70–190 BPM. */
-      const lagMax = Math.min(n - 2, Math.round(fs * 3.5));  // ≤3.5 s of lag — bounds the scan
+
+      /* ---- pass 1: comb-filter tempo scan over the ONSET spike stream. For candidate
+         period T we walk the beat grid at every phase and count how many spikes land on
+         it. A true train scores ~1.0 hits/grid-point at its own period; SUBHARMONICS
+         (T/2, T/3…) score <=0.5 because half the grid points fall between beats. Taking
+         argmax then folding DOWN to the strongest exact divisor kills octave overshoots. ---- */
+      const bpmLo = 68, bpmHi = 190;
+      const lagMin = Math.max(1, Math.round(fs * 60 / bpmHi));
+      const lagMax = Math.min(n - 2, Math.round(fs * 60 / bpmLo));
       if (lagMax - lagMin < 2) return null;
+      /* comb[T] = best-phase hit density of a beat grid with period T samples.
+         Phase search is restricted to the first `period` offsets but sampled on a stride
+         so the scan stays O(n log n)-ish even at long lags (fine tempos). */
+      const combAt = (Tr) => {
+        if (Tr < lagMin || Tr > lagMax || Tr < 1) return 0;
+        let bestPhase = 0;
+        const phaseStride = Math.max(1, Math.floor(Tr / 48));
+        for (let off = 0; off < Tr; off += phaseStride) {
+          let acc = 0, c = 0;
+          for (let i = off; i < n; i += Tr) { acc += env[i]; c++; }
+          if (c > 1) { const v = acc / c; if (v > bestPhase) bestPhase = v; }
+        }
+        return bestPhase;
+      };
+      const strength = new Float32Array(lagMax + 1);
+      let gmax = 0, gLag = 0;
+      for (let lag = lagMin; lag <= lagMax; lag++) {
+        const v = combAt(lag);
+        strength[lag] = v;
+        if (v > gmax) { gmax = v; gLag = lag; }
+      }
+      if (!(gmax > 0)) return null;
+      /* fold down: from the global-peak lag, walk its exact divisors; accept the SLOWEST
+         lag whose strength is within 2% of the peak (i.e. still catches every beat). */
+      const eps = gmax * 0.98;
+      let fundamental = gLag;
+      for (let h = 2; h * fundamental <= lagMax; h++) { /* nope: divisors are smaller */ }
+      for (let q = fundamental; q >= lagMin; q--) {
+        if (fundamental % q === 0 && strength[q] >= eps) { fundamental = q; break; }
+      }
+      /* also consider multiples of the fundamental that stay strong (rare) — keep simple:
+         the fundamental IS the answer unless AC says otherwise (pass 2 cross-check). */
       const ac = new Float32Array(lagMax + 2);
       for (let lag = lagMin; lag <= lagMax; lag++) {
         let s = 0;
         for (let i = 0; i + lag < n; i++) s += env[i] * env[i + lag];
-        ac[lag] = s / (n - lag);                             // unbiased — short lags stay honest
+        ac[lag] = s / (n - lag);
       }
-      /* Octave disambiguation: tempo octaves all correlate, and the *fundamental* (longest
-         strong lag) reads best for beatmatching. Walk down from the slowest tempo; accept a
-         lag if it's within 2% of the global max AND no smaller divisor lag (lag/2, lag/3…)
-         is equally strong. Bounded scan — stops at the first accepted candidate. */
-      let gmax = 0;
-      for (let lag = lagMin; lag <= lagMax; lag++) if (ac[lag] > gmax) gmax = ac[lag];
-      if (!(gmax > 0)) return null;
-      const eps = gmax * 0.98;
-      let best = 0;
-      /* Only inspect lags that actually clear the threshold — on real music many near-max
-         peaks exist and the old "walk every lag, test divisors on each" was O(lagRange²/h),
-         which stalled the main thread for seconds. Candidates are collected in one pass. */
-      const cands = [];
-      for (let lag = lagMax; lag >= lagMin; lag--) if (ac[lag] >= eps) cands.push(lag);
-      for (const lag of cands) {
-        let dominatedByDivisor = false;
-        const hMax = Math.max(1, Math.floor(lag / lagMin));   // q = lag/h ≥ lagMin ⇒ h ≤ lag/lagMin
-        for (let h = 2; h <= hMax; h++) {
-          const q = lag / h;
-          if (q !== Math.floor(q)) continue;     // not an exact divisor
-          if (ac[q] >= eps) { dominatedByDivisor = true; break; }
-        }
-        if (!dominatedByDivisor) { best = lag; break; }
+      /* refine around `fundamental` with parabolic interpolation on the comb curve */
+      /* continuous refinement: sweep candidate periods around the fundamental at fine
+         resolution and keep the best combined score (comb density × AC support). */
+      const suppAt = (T) => {
+        const lag = Math.round(T);
+        return (gmax > 0 && lag >= lagMin && lag <= lagMax && ac[lag] > 0)
+          ? 0.5 + 0.5 * Math.min(1, ac[lag] / gmax) : 0.5;
+      };
+      let bestT = fundamental, bestScore = strength[fundamental] * suppAt(fundamental);
+      const span = Math.max(4, Math.round(fundamental * 0.06));
+      for (let T = fundamental - span; T <= fundamental + span; T += 0.25) {
+        if (T < lagMin || T > lagMax) continue;
+        const s = combAt(Math.round(T)) * suppAt(T);
+        if (s > bestScore) { bestScore = s; bestT = T; }
       }
-      if (!best) { best = lagMin; for (let lag = lagMin + 1; lag <= lagMax; lag++) if (ac[lag] > ac[best]) best = lag; }
-      let lag = best;                                        // parabolic interpolation around the peak
-      if (best > lagMin && best < lagMax) {
-        const d = ac[best - 1] - 2 * ac[best] + ac[best + 1];
-        if (Math.abs(d) > 1e-12) lag = best - 0.5 * (ac[best + 1] - ac[best - 1]) / d;
-      }
-      let bpm = 60 * fs / lag;
-      /* Fold into a DJ-friendly window. Guarded: NaN/Infinity from a degenerate lag
-         must never spin here (this was the hang that froze BPM detection). */
-      if (!Number.isFinite(bpm) || bpm <= 0) return null;
-      for (let g = 0; g < 8 && bpm < 70; g++) bpm *= 2;
-      for (let g = 0; g < 8 && bpm > 190; g++) bpm /= 2;
-      if (!Number.isFinite(bpm) || bpm <= 0) return null;
+      let bpm = fs * 60 / bestT;
+      if (!Number.isFinite(bpm) || bpm < bpmLo - 2 || bpm > bpmHi + 2) return null;
       return Math.round(bpm * 10) / 10;
     } catch { return null; }
   }

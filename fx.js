@@ -1,7 +1,10 @@
 /* Detune FX: music-reactive engine. Analyses the audio, publishes --bass/--mid/--treb/--beat to CSS, draws the waveform + embers. */
 (()=>{"use strict";
 const R=document.documentElement,$=id=>document.getElementById(id),reduce=matchMedia("(prefers-reduced-motion: reduce)").matches,lite=R.classList.contains("lite");
-const FX=window.DetuneFX={analyser:null},S={bass:0,mid:0,treb:0,beat:0,avg:0,last:0},N=lite?48:96,sm=new Float32Array(N),pk=new Float32Array(N);
+const FX=window.DetuneFX={analyser:null,analyserB:null},S={bass:0,mid:0,treb:0,beat:0,avg:0,last:0},N=lite?48:96,sm=new Float32Array(N),pk=new Float32Array(N);
+/* During a crossfade the incoming deck (B) becomes the dominant audio — app.js sets
+   window.__detuneXfade while ramping so the visualiser follows what you HEAR. */
+const xfadeOn=()=>!!window.__detuneXfade;
 let fd,td,raw,rawPrev,raf=0;
 /* kick detector — the old beat trigger used mean bass energy (30–150Hz), so any loud
    808/bassline held it lit. Now we analyse a raw (unsmoothed) low band and fire only on a
@@ -16,7 +19,7 @@ const ec=em.getContext("2d"),P=[],fit=()=>{em.width=lite?1:innerWidth;em.height=
 const spawn=n=>{if(lite)return;for(let i=0;i<n&&P.length<160;i++)P.push({x:Math.random()*em.width,y:em.height+8,vx:(Math.random()-.5)*.7,vy:-(.5+Math.random()*1.5)*(1+S.bass*1.5),r:1+Math.random()*2.4,a:1,ph:Math.random()*6.28})};
 const norm=x=>Math.min(1,Math.max(0,(x-.28)/.55)),env=(k,v)=>S[k]=v>S[k]?v:S[k]*.88+v*.12,ranges=[...document.querySelectorAll(".range,.progress")];
 function tick(t){raf=0;if(document.hidden)return;raf=requestAnimationFrame(tick);if(lite&&t-(tick.l||0)<32)return;tick.l=t;
- const an=FX.analyser,playing=R.classList.contains("is-playing");let b=0,m=0,h=0,hz=1;
+ const an=(xfadeOn()&&FX.analyserB)?FX.analyserB:FX.analyser,playing=R.classList.contains("is-playing");let b=0,m=0,h=0,hz=1;
  if(an){const n=an.frequencyBinCount;if(!fd||fd.length!==n){fd=new Uint8Array(n);td=new Uint8Array(an.fftSize)}if(!raw||raw.length!==n)raw=new Uint8Array(n);an.getByteFrequencyData(fd);an.getByteTimeDomainData(td);hz=an.context.sampleRate/an.fftSize;
   const band=(lo,hi)=>{let s=0,c=0;for(let i=Math.max(1,lo/hz|0),e=Math.min(n-1,hi/hz|0);i<=e;i++){s+=fd[i];c++}return c?s/c/255:0};b=band(30,150);m=band(300,2500);h=band(4000,14000);
   /* raw low-band (25–160Hz) and mid-band jump for the kick detector — measured on an
