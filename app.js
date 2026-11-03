@@ -314,7 +314,7 @@ let audioUrl = null;
    pitch worklet → master), and ramp gains on an equal-power curve via rAF.
    If the user dragged the Crossfade slider during playback, xfade.pending picks
    up the new length at the next transition. Repeat-one / A–B loops never fade. */
-const xfade = { active: false, raf: 0, t0: 0, dur: 6, urlB: null, idB: null, mul: 1, rateB: 1, pending: null, busy: false };
+const xfade = { active: false, raf: 0, t0: 0, dur: 6, urlB: null, idB: null, mul: 1, rateB: 1, pending: null, busy: false, armedId: null };
 const bpmCache = new Map();     // trackId -> bpm | null (session only — no DB churn)
 const bpmBusy = new Set();
 function xfadeUI() {
@@ -323,12 +323,23 @@ function xfadeUI() {
   if (v) v.textContent = settings.crossfade ? `${settings.crossfade}s` : "off";
   const bm = $("beatmatch"); if (bm && bm.checked !== settings.beatmatch) bm.checked = settings.beatmatch;
 }
-function stopXfade() {
+function killDeckB() {                        /* stop + unload deck B, revoke its URL */
   cancelAnimationFrame(xfade.raf); xfade.raf = 0;
   try { audioB.pause(); } catch { /* ignore */ }
+  if (xfade.urlB) revoke(xfade.urlB);
   audioB.removeAttribute("src"); audioB.load();
-  revoke(xfade.urlB); xfade.urlB = null; xfade.idB = null; xfade.mul = 1;
-  xfade.active = false; xfade.busy = false;
+  xfade.urlB = null; xfade.idB = null; xfade.mul = 1;
+  xfade.active = false; xfade.busy = false; xfade.armedId = null;
+}
+function stopXfade() { killDeckB(); }
+/* Would a crossfade legitimately take over this transition? Used by the ended
+   handler to distinguish "deck B is still loading" from "nothing to fade into". */
+function xfadeWillTakeOver() {
+  if (!settings.crossfade || !ctx || !currentId || repeat === "one") return false;
+  if (loopA !== null && loopB !== null) return false;
+  const ids = currentList().map(t => t.id);
+  const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
+  return !!(pick && pick.id !== currentId && trackById(pick.id)?.blob);
 }
 function armXfade() {                       /* called from timeupdate near the end of a track */
   const secs = settings.crossfade;
@@ -339,12 +350,14 @@ function armXfade() {                       /* called from timeupdate near the e
   if (loopA !== null && audio.currentTime < loopA) return;
   const remain = (loopB !== null ? loopB : audio.duration) - audio.currentTime;
   if (!(remain > 0.25) || remain > secs) return;
+  if (xfade.armedId === currentId) return;  /* already tried this transition — don't re-arm every tick */
+  xfade.armedId = currentId;
   const ids = currentList().map(t => t.id);
   const pick = C.pickNext(ids, currentId, { dir: 1, shuffle, repeat });
-  if (!pick || pick.id === currentId) return;
+  if (!pick || pick.id === currentId) return;   /* last track / repeat-one style end → let it just stop */
   const nt = trackById(pick.id); if (!nt || !nt.blob) return;
   xfade.busy = true;
-  Promise.resolve(startCrossfade(nt)).catch(e => { console.warn("Crossfade aborted", e); xfade.busy = false; });
+  Promise.resolve(startCrossfade(nt)).catch(e => { console.warn("Crossfade aborted", e); if (xfade.busy) { xfade.busy = false; audio.volume = 1; } });
 }
 async function startCrossfade(nt) {
   const dur = xfade.pending != null ? xfade.pending : settings.crossfade;
@@ -393,22 +406,14 @@ function runXfade() {
   });
 }
 function finishXfade() {
-  xfade.active = false; xfade.busy = false;
   const id = xfade.idB;
-  cancelAnimationFrame(xfade.raf); xfade.raf = 0;
-  try { audioB.pause(); } catch { /* ignore */ }
-  audioB.removeAttribute("src"); audioB.load();
-  revoke(xfade.urlB); xfade.urlB = null; xfade.idB = null; xfade.mul = 1;
+  killDeckB();                               /* pauses B, revokes URL, clears active/busy/armedId */
   audio.volume = 1;                          /* master gain handles real volume */
   if (id) commitTrack(id, true);             /* promote deck B to deck A — seamless */
 }
 function bailXfade() {                       /* user took manual control mid-fade */
   if (!xfade.active && !xfade.busy) return;
-  cancelAnimationFrame(xfade.raf); xfade.raf = 0;
-  try { audioB.pause(); } catch { /* ignore */ }
-  audioB.removeAttribute("src"); audioB.load();
-  revoke(xfade.urlB); xfade.urlB = null; xfade.idB = null; xfade.mul = 1;
-  xfade.active = false; xfade.busy = false;
+  killDeckB();
   audio.volume = 1;
 }
 
@@ -752,10 +757,16 @@ function wire() {
 
   audio.addEventListener("play", () => { const np = document.querySelector(".nowplaying") || document.querySelector(".player"); np.classList.add("playing"); $("playIcon").innerHTML = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>'; $("play").setAttribute("aria-label", "Pause"); });
   audio.addEventListener("pause", () => { const np = document.querySelector(".nowplaying") || document.querySelector(".player"); np.classList.remove("playing"); $("playIcon").innerHTML = '<path d="M8 5v14l11-7z"/>'; $("play").setAttribute("aria-label", "Play"); });
+  /* Crossfade can only start when there is actually a *different* track to fade
+     into. If it never armed (last track, repeat-one, single-track playlist, deck-B
+     preload failed) the old song must simply STOP — never restart itself. */
   audio.addEventListener("ended", () => {
     if (xfade.active || xfade.busy) return;   /* deck B already owns the transition */
+    if (xfade.armedId === currentId && xfadeWillTakeOver()) return; /* slow preload still in flight */
+    killDeckB();                              /* deck B can no longer leak sound */
+    audio.volume = 1;                         /* undo any partial fade ramp before next play */
     if (repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
-    if (!advance(1)) say("Track ended.");
+    if (!advance(1)) say("Track ended.");     /* advance()→playTrack() would reload+replay the same src */
   });
   audio.addEventListener("error", () => { if (audio.src) say("This audio could not be played. Try a different file."); });
   audio.addEventListener("timeupdate", () => {

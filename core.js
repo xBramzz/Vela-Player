@@ -309,7 +309,7 @@
          60 BPM is 4 s and was previously allowed as a lag; combined with the divisor scan below
          it produced pathological runtimes on some inputs. For beatmatching, tempo octaves are
          equivalent anyway — the fold step maps everything into 70–190 BPM. */
-      const lagMax = Math.min(n - 2, Math.round(fs * 3.5), Math.round(fs * 60 / 60));
+      const lagMax = Math.min(n - 2, Math.round(fs * 3.5));  // ≤3.5 s of lag — bounds the scan
       if (lagMax - lagMin < 2) return null;
       const ac = new Float32Array(lagMax + 2);
       for (let lag = lagMin; lag <= lagMax; lag++) {
@@ -348,8 +348,12 @@
         if (Math.abs(d) > 1e-12) lag = best - 0.5 * (ac[best + 1] - ac[best - 1]) / d;
       }
       let bpm = 60 * fs / lag;
-      while (bpm < 70) bpm *= 2;                             // fold into a DJ-friendly window
-      while (bpm > 190) bpm /= 2;
+      /* Fold into a DJ-friendly window. Guarded: NaN/Infinity from a degenerate lag
+         must never spin here (this was the hang that froze BPM detection). */
+      if (!Number.isFinite(bpm) || bpm <= 0) return null;
+      for (let g = 0; g < 8 && bpm < 70; g++) bpm *= 2;
+      for (let g = 0; g < 8 && bpm > 190; g++) bpm /= 2;
+      if (!Number.isFinite(bpm) || bpm <= 0) return null;
       return Math.round(bpm * 10) / 10;
     } catch { return null; }
   }
