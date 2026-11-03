@@ -340,22 +340,43 @@
       const lagMin = Math.max(1, Math.round(fs * 60 / bpmHi));
       const lagMax = Math.min(n - 2, Math.round(fs * 60 / bpmLo));
       if (lagMax - lagMin < 2) return null;
-      /* comb[T] = best-phase hit density of a beat grid with period T samples.
-         Phase search is restricted to the first `period` offsets but sampled on a stride
-         so the scan stays O(n log n)-ish even at long lags (fine tempos). */
+      /* comb[T] = best-phase hit density of a beat grid with period T samples. */
+      const strength = new Float32Array(lagMax + 1);
+      let gmax = 0, gLag = 0;
+      /* Spike index list — reused by the exact-density scorer and pass-2 histogram. */
+      const spikeIdx = [];
+      for (let i = 0; i < n; i++) if (env[i] > 0) spikeIdx.push(i);
+      const K = spikeIdx.length;
+      /* EXACT comb density: count grid points that a spike sits ON (±tol samples),
+         divided by grid length. Unlike the old "average value along the grid" score,
+         a subharmonic period T·(m+1)/m lands only m of its (m+1) grid lines on spikes
+         → scores ≤ m/(m+1) < 1, so the TRUE tempo always wins. This killed the classic
+         hijack where 80 BPM read as 68.4 (5/4 grid ties on sparse trains). */
+      const tol = Math.max(2, Math.round(fs * 0.004));     // ±4 ms onset jitter
       const combAt = (Tr) => {
         if (Tr < lagMin || Tr > lagMax || Tr < 1) return 0;
         let bestPhase = 0;
         const phaseStride = Math.max(1, Math.floor(Tr / 48));
         for (let off = 0; off < Tr; off += phaseStride) {
-          let acc = 0, c = 0;
-          for (let i = off; i < n; i += Tr) { acc += env[i]; c++; }
-          if (c > 1) { const v = acc / c; if (v > bestPhase) bestPhase = v; }
+          let hits = 0, c = 0;
+          for (let g = 0; ; g++) {
+            const p = off + g * Tr;
+            if (p >= n) break;
+            c++;
+            /* binary search: does a spike sit within ±tol of this grid point? */
+            let lo = 0, hi = K - 1, found = false;
+            while (lo <= hi) {
+              const mid = (lo + hi) >> 1, v = spikeIdx[mid];
+              if (v < p - tol) lo = mid + 1;
+              else if (v > p + tol) hi = mid - 1;
+              else { found = true; break; }
+            }
+            if (found) hits++;
+          }
+          if (c > 1) { const v = hits / c; if (v > bestPhase) bestPhase = v; }
         }
         return bestPhase;
       };
-      const strength = new Float32Array(lagMax + 1);
-      let gmax = 0, gLag = 0;
       for (let lag = lagMin; lag <= lagMax; lag++) {
         const v = combAt(lag);
         strength[lag] = v;
@@ -366,9 +387,44 @@
          lag whose strength is within 2% of the peak (i.e. still catches every beat). */
       const eps = gmax * 0.98;
       let fundamental = gLag;
-      for (let h = 2; h * fundamental <= lagMax; h++) { /* nope: divisors are smaller */ }
       for (let q = fundamental; q >= lagMin; q--) {
         if (fundamental % q === 0 && strength[q] >= eps) { fundamental = q; break; }
+      }
+      /* ---- pass 2: spike-interval histogram vote. Inter-onset intervals cluster at the
+         TRUE period and integer multiples only, so they cross-check any residual comb
+         error. Take the median interval, snap it to the nearest comb local maximum, and
+         adopt it when the comb answer disagrees by >2 %. ---- */
+      {
+        const idxs = spikeIdx;
+        const ivs = [];
+        for (let k = 1; k < idxs.length; k++) {
+          const d = idxs[k] - idxs[k - 1];
+          if (d >= lagMin && d <= lagMax) ivs.push(d);
+        }
+        if (ivs.length >= 3) {
+          ivs.sort((a, b) => a - b);
+          const med = ivs[ivs.length >> 1];
+          const spread = Math.max(2, Math.round(med * 0.02));
+          let bestLag = Math.round(med), bestCnt = -1;
+          for (let c = Math.round(med) - spread; c <= Math.round(med) + spread; c++) {
+            if (c < lagMin || c > lagMax) continue;
+            let cnt = 0;
+            for (const v of ivs) if (Math.abs(v - c) <= spread) cnt++;
+            if (cnt > bestCnt) { bestCnt = cnt; bestLag = c; }
+          }
+          /* snap the histogram mode to the nearest comb local maximum so phase-refined
+             periods win over off-grid modes */
+          for (let r = 0; r <= spread && !(bestLag > lagMin && bestLag < lagMax &&
+               strength[bestLag] >= strength[bestLag - 1] && strength[bestLag] >= strength[bestLag + 1]); r++) {
+            const l = bestLag - r, rr = bestLag + r;
+            if (l >= lagMin && l <= lagMax && strength[l] > 0 &&
+                (l === lagMin || strength[l] >= strength[l - 1]) && (l === lagMax || strength[l] >= strength[l + 1])) { bestLag = l; break; }
+            if (rr >= lagMin && rr <= lagMax && rr !== l && strength[rr] > 0 &&
+                (rr === lagMin || strength[rr] >= strength[rr - 1]) && (rr === lagMax || strength[rr] >= strength[rr + 1])) { bestLag = rr; break; }
+          }
+          const agree = Math.abs(bestLag - fundamental) / fundamental;
+          if (agree > 0.02 && bestCnt >= ivs.length * 0.6) fundamental = bestLag;
+        }
       }
       /* also consider multiples of the fundamental that stay strong (rare) — keep simple:
          the fundamental IS the answer unless AC says otherwise (pass 2 cross-check). */
@@ -387,14 +443,25 @@
           ? 0.5 + 0.5 * Math.min(1, ac[lag] / gmax) : 0.5;
       };
       let bestT = fundamental, bestScore = strength[fundamental] * suppAt(fundamental);
-      const span = Math.max(4, Math.round(fundamental * 0.06));
+      /* Refinement window must be SMALLER than the gap to the nearest harmonic/subharmonic
+         candidate (±16.7 % at the 5th/6th or 4th/5th boundary). A ±6 % span around a
+         75 BPM fundamental reaches 80 BPM — the exact 4/5 subharmonic ratio — so the sweep
+         could "lock on" to a neighbouring tempo's grid and return e.g. 68.4 for an 80 BPM
+         track. ±3 % keeps us strictly inside one octave class. */
+      const span = Math.max(2, Math.min(Math.round(fundamental * 0.03), Math.round(fs / 3)));
       for (let T = fundamental - span; T <= fundamental + span; T += 0.25) {
         if (T < lagMin || T > lagMax) continue;
         const s = combAt(Math.round(T)) * suppAt(T);
         if (s > bestScore) { bestScore = s; bestT = T; }
       }
       let bpm = fs * 60 / bestT;
-      if (!Number.isFinite(bpm) || bpm < bpmLo - 2 || bpm > bpmHi + 2) return null;
+      /* Snap back into the declared scan window: with sparse onset grids the refined
+         period can drift a few ms past the lag bounds (e.g. 80 BPM → 78.9). Fold by
+         octaves first, then clamp — the estimate is only used for ±6 % beatmatch nudges. */
+      while (bpm < bpmLo) bpm *= 2;
+      while (bpm > bpmHi) bpm /= 2;
+      bpm = clamp(bpm, bpmLo, bpmHi);
+      if (!Number.isFinite(bpm)) return null;
       return Math.round(bpm * 10) / 10;
     } catch { return null; }
   }
