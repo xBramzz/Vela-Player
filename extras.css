@@ -95,3 +95,34 @@ html.lite .lyrics{background:color-mix(in srgb,var(--blood-dk) 55%,black)}
 .transport{flex-wrap:wrap;justify-content:center}
 @media(max-width:900px){.sleep{display:none}.track{grid-template-columns:auto 38px minmax(0,1fr) auto auto 30px}}
 @media(max-width:420px){.rowacts .q{display:none}}
+
+/* ---------- Full-screen lyric shower (Apple Music style, glassmorphism) ---------- */
+.lshower{position:fixed;inset:0;z-index:90;display:grid;grid-template-rows:auto 1fr auto;isolation:isolate;color:#fff}
+.lshower[hidden]{display:none}
+html:not(.lite) .lshower{animation:lshIn .42s var(--ease,cubic-bezier(.2,.8,.2,1))}
+@keyframes lshIn{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:none}}
+.lshower-bg{position:absolute;inset:0;z-index:-1;overflow:hidden;background:var(--pool2,#2a0308)}
+.lshower-bg img{position:absolute;inset:-12%;width:124%;height:124%;object-fit:cover;filter:blur(70px) saturate(1.5) brightness(.6);transform:scale(1.1);transition:opacity .5s}
+html:not(.lite) .lshower-bg img{animation:lshDrift 26s ease-in-out infinite alternate}
+@keyframes lshDrift{from{transform:scale(1.1) translate(-1.5%,1%)}to{transform:scale(1.22) translate(1.5%,-1%)}}
+.lshower-frost{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,3,6,.5),rgba(8,3,6,.78)),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 22%,transparent),transparent 60%)}
+.lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px}
+.lshower-close:hover{background:rgba(255,255,255,.2)!important;transform:scale(1.06)}
+.lshower-head{text-align:center;padding:clamp(26px,6vh,58px) 20px 8px;text-shadow:0 2px 22px rgba(0,0,0,.55)}
+.lshower-kicker{display:block;font:600 11px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-bottom:8px}
+.lshower-head h2{margin:0;font:600 clamp(22px,3.4vw,34px)/1.15 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:min(72ch,92vw);margin-inline:auto}
+.lshower-head p{margin:4px 0 0;font:500 15px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lshower-body{position:relative;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:34vh 24px 34vh;text-align:center}
+.lshower-body::-webkit-scrollbar{display:none}
+.lshower-body>.lyr{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,4.6vw,52px);line-height:1.28;letter-spacing:-.022em;margin:0 auto;padding:10px 14px;max-width:min(22ch + 40%,24em);color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
+.lshower-body>.lyr.gap{min-height:1.4em;pointer-events:none}
+.lshower-body>.lyr:hover{color:rgba(255,255,255,.55);filter:blur(.4px)}
+.lshower-body>.lyr.on{color:#fff;filter:none;opacity:1;transform:none;text-shadow:0 4px 34px color-mix(in srgb,var(--blood-hi,#ff3b47) 55%,rgba(0,0,0,.6))}
+.lshower-foot{text-align:center;padding:10px 20px max(16px,env(safe-area-inset-bottom))}
+.lshower-foot span{font:500 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.4);letter-spacing:.02em}
+.lshower-empty{display:grid;gap:10px;justify-items:center;align-content:center;height:100%;color:rgba(255,255,255,.6);font:500 16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;text-align:center}
+.lshower-empty i{font-size:38px;opacity:.6}
+/* reduced motion & lite mode — no drift/blur/scale theatrics */
+@media(prefers-reduced-motion:reduce){.lshower,.lshower-bg img{animation:none}.lshower-body>.lyr{transition:color .2s;filter:none;transform:none;opacity:1}.lshower-body>.lyr.on{font-weight:800}}
+html.lite .lshower-bg img{filter:blur(40px) saturate(1.3) brightness(.55);animation:none}
+html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
