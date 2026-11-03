@@ -409,7 +409,12 @@ function finishXfade() {
   const id = xfade.idB;
   killDeckB();                               /* pauses B, revokes URL, clears active/busy/armedId */
   audio.volume = 1;                          /* master gain handles real volume */
-  if (id) commitTrack(id, true);             /* promote deck B to deck A — seamless */
+  if (!id) return;
+  /* Promote deck B to deck A. IMPORTANT: commitTrack() calls audio.load(), which
+     CANCELS deck A's pending "ended" event — if we didn't autoplay here, the promoted
+     track would sit paused at 0:00 forever (the old bug that made the last song appear
+     to "restart" when the user pressed play again). */
+  Promise.resolve(commitTrack(id, true)).catch(e => { console.warn("Crossfade promotion failed", e); advance(1); });
 }
 function bailXfade() {                       /* user took manual control mid-fade */
   if (!xfade.active && !xfade.busy) return;
@@ -762,7 +767,14 @@ function wire() {
      preload failed) the old song must simply STOP — never restart itself. */
   audio.addEventListener("ended", () => {
     if (xfade.active || xfade.busy) return;   /* deck B already owns the transition */
-    if (xfade.armedId === currentId && xfadeWillTakeOver()) return; /* slow preload still in flight */
+    const idAtEnd = currentId;                /* guard against re-entrant/stale ended events */
+    if (xfade.armedId === currentId && xfadeWillTakeOver()) {
+      /* Crossfade was supposed to take over but never armed (deck-B preload failed, tab
+         was hidden for the whole tail, etc). Fallback: hand off via a NORMAL track change
+         — NEVER replay the same src, which is what made the last song restart. */
+      setTimeout(() => { if (currentId === idAtEnd && !xfade.active && !xfade.busy && audio.ended) { killDeckB(); audio.volume = 1; if (repeat !== "one" && !advance(1)) say("Track ended."); } }, 400);
+      return;
+    }
     killDeckB();                              /* deck B can no longer leak sound */
     audio.volume = 1;                         /* undo any partial fade ramp before next play */
     if (repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
