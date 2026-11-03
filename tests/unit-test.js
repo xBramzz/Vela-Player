@@ -131,6 +131,7 @@ assert.strictEqual(C.queueAdd(q, null, "next"), q, "null id is a no-op");
   assert.match(hb, /^[0-9a-f]{64}-\d+$/, "chunked hash shape");
   assert.strictEqual(hb, await C.hashFileWith(big, subtle), "chunked: fallback == subtle");
 
+  console.error("MARK hash ok");
   /* ---- LRC parsing ---- */
   let r = C.parseLrc("[00:12.34]first line\n[01:02]second line\nnot timed");
   assert.strictEqual(r.synced, true); assert.strictEqual(r.lines.length, 2);
@@ -144,6 +145,7 @@ assert.strictEqual(C.queueAdd(q, null, "next"), q, "null id is a no-op");
   assert.strictEqual(C.parseLrc(null).lines.length, 0);
   assert.strictEqual(C.parseLrc("[0:00.00]").lines.length, 1, "timed empty line kept as gap marker (rendered as ♪)");
 
+  console.error("MARK lrc ok");
   /* ---- backup validation ---- */
   const good = { version: 3, tracks: [{ id: "t1", name: "a.mp3", title: "A", artist: "", duration: 12, added: 1, blobData: "AAAA" }, { id: "t2", name: "bad", blobData: "" }], playlists: [{ name: "P", trackIds: ["t1","t2"] }] };
   const v = C.validateBackup(good, { genId: () => "tid" });
@@ -160,6 +162,7 @@ assert.strictEqual(C.queueAdd(q, null, "next"), q, "null id is a no-op");
   assert.strictEqual(evilBk.tracks[0].duration, 0, "non-numeric duration sanitised");
   assert.ok(evilBk.tracks[0].name.length <= 255, "length-bounded");
 
+  console.error("MARK backup ok");
   /* ---- settings sanitizer ---- */
   const s = C.sanitizeSettings({ cents: 99999, tempo: "0.75", eq: [1,2,3], volume: 5, reverb: -3, link: "yes", skip: 0, sleepMin: -4 });
   assert.strictEqual(s.cents, 1200); assert.strictEqual(s.tempo, 0.75);
@@ -167,12 +170,14 @@ assert.strictEqual(C.queueAdd(q, null, "next"), q, "null id is a no-op");
   assert.strictEqual(s.link, true); assert.strictEqual(s.skip, 1); assert.strictEqual(s.sleepMin, 0);
   assert.strictEqual(C.sanitizeSettings(null).cents, 0);
 
+  console.error("MARK settings ok");
   /* ---- fileAccepted ---- */
   assert.strictEqual(C.fileAccepted({ name: "x.MP3", type: "" }, ["mp3"]), true);
   assert.strictEqual(C.fileAccepted({ name: "song", type: "audio/flac" }, ["mp3"]), true);
   assert.strictEqual(C.fileAccepted({ name: "notes.txt", type: "text/plain" }, ["mp3"]), false);
   assert.strictEqual(C.fileAccepted({ name: "a.wav", type: "" }, ["wav"]), true);
 
+  console.error("MARK fileAccepted ok");
   /* ---- BPM estimation on synthetic beats (pure DSP over Float32 buffers) ---- */
   {
     const sr = 44100;
