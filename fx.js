@@ -18,7 +18,7 @@ const em=document.createElement("canvas");em.className="embers";em.setAttribute(
 const ec=em.getContext("2d"),P=[],fit=()=>{em.width=lite?1:innerWidth;em.height=lite?1:innerHeight};fit();addEventListener("resize",fit);
 const spawn=n=>{if(lite)return;for(let i=0;i<n&&P.length<160;i++)P.push({x:Math.random()*em.width,y:em.height+8,vx:(Math.random()-.5)*.7,vy:-(.5+Math.random()*1.5)*(1+S.bass*1.5),r:1+Math.random()*2.4,a:1,ph:Math.random()*6.28})};
 const norm=x=>Math.min(1,Math.max(0,(x-.28)/.55)),env=(k,v)=>S[k]=v>S[k]?v:S[k]*.88+v*.12,ranges=[...document.querySelectorAll(".range,.progress")];
-function tick(t){raf=0;if(document.hidden)return;raf=requestAnimationFrame(tick);if(lite&&t-(tick.l||0)<32)return;tick.l=t;
+function tick(t){raf=0;if(document.hidden||(window.DetuneFX&&DetuneFX.freeze))return;raf=requestAnimationFrame(tick);if(lite&&t-(tick.l||0)<32)return;tick.l=t;
  const an=(xfadeOn()&&FX.analyserB)?FX.analyserB:FX.analyser,playing=R.classList.contains("is-playing");let b=0,m=0,h=0,hz=1;
  if(an){const n=an.frequencyBinCount;if(!fd||fd.length!==n){fd=new Uint8Array(n);td=new Uint8Array(an.fftSize)}if(!raw||raw.length!==n)raw=new Uint8Array(n);an.getByteFrequencyData(fd);an.getByteTimeDomainData(td);hz=an.context.sampleRate/an.fftSize;
   const band=(lo,hi)=>{let s=0,c=0;for(let i=Math.max(1,lo/hz|0),e=Math.min(n-1,hi/hz|0);i<=e;i++){s+=fd[i];c++}return c?s/c/255:0};b=band(30,150);m=band(300,2500);h=band(4000,14000);
@@ -67,7 +67,12 @@ function wcol(){const k=_cs.getPropertyValue("--blood")+"|"+_cs.getPropertyValue
  ec.clearRect(0,0,em.width,em.height);ec.globalCompositeOperation="lighter";if(!reduce&&Math.random()<(playing?.2+S.bass*.8:.04))spawn(1);
  for(let i=P.length-1;i>=0;i--){const p=P[i];p.ph+=.03;p.x+=p.vx+Math.sin(p.ph)*.4;p.y+=p.vy;p.a-=.0035;if(p.a<=0||p.y<-10){P.splice(i,1);continue}ec.fillStyle=`rgba(255,${70+p.a*90|0},70,${p.a*.75})`;ec.beginPath();ec.arc(p.x,p.y,p.r*(1+S.treb),0,6.283);ec.fill()}
  for(const g of ranges){const p=((g.value-g.min)/(g.max-g.min)*100).toFixed(1);if(g._p!==p){g._p=p;g.style.setProperty("--p",p+"%")}}}
-const go=()=>{if(!raf&&!document.hidden)raf=requestAnimationFrame(tick)};document.addEventListener("visibilitychange",go);go();
+const go=()=>{if(!raf&&!document.hidden&&!(window.DetuneFX&&DetuneFX.freeze))raf=requestAnimationFrame(tick)};document.addEventListener("visibilitychange",go);go();
+/* The full-screen lyric shower sets DetuneFX.freeze while open: the background page is fully
+   covered by it, so we stop ALL background painting (waveform canvas, embers, CSS-var writes)
+   to kill the lag + flicker. Audio analysis & playback keep running untouched. */
+Object.defineProperty(FX,"freeze",{value:false,writable:true,configurable:true});
+window.__detuneFxWake=go; /* extras.js calls this when the shower closes to resume painting */
 
 /* ---- UX layer ---- */
 const a=$("audio"),list=$("trackList"),pl=document.querySelector(".nowplaying")||document.querySelector(".player");

@@ -118,6 +118,31 @@ html:not(.lite) .lshower-bg img{animation:lshDrift 26s ease-in-out infinite alte
 .lshower-body>.lyr.gap{min-height:1.4em;pointer-events:none}
 .lshower-body>.lyr:hover{color:rgba(255,255,255,.55);filter:blur(.4px)}
 .lshower-body>.lyr.on{color:#fff;filter:none;opacity:1;transform:none;text-shadow:0 4px 34px color-mix(in srgb,var(--blood-hi,#ff3b47) 55%,rgba(0,0,0,.6))}
+/* ---- performance: freeze the page behind the shower ----
+   The overlay is fully opaque (frost layer), so every animated background element below it
+   is wasted GPU work. While .lyrshow-open is set we display:none the heavy layers (no paint,
+   no composite, no backdrop-filter cost) and fx.js stops its rAF loop entirely.
+   NOTE: only fixed decorative layers are hidden — the player bar stays visible (just covered)
+   so grid layout never reflows underneath the open shower. */
+body.lyrshow-open .bg,body.lyrshow-open .fog,body.lyrshow-open .yard,body.lyrshow-open .embers,
+body.lyrshow-open #visual,body.lyrshow-open .stage::after,body.lyrshow-open body::before,
+body.lyrshow-open body::after{display:none!important;animation:none!important}
+/* ---- lyric shower effects ---- */
+@property --lshGlow{syntax:'<color>';inherits:false;initial-value:rgba(255,59,71,0)}
+@property --sweep{syntax:'<percentage>';inherits:false;initial-value:-30%}
+html:not(.lite) .lshower-body>.lyr.on{--lshGlow:color-mix(in srgb,var(--blood-hi,#ff3b47) 85%,white);animation:lshPop .6s var(--ease,cubic-bezier(.2,.8,.2,1)),lshSweep 1.4s var(--ease,cubic-bezier(.2,.8,.2,1)) .1s both,lshFloat 4.5s ease-in-out .7s infinite alternate}
+/* slow hover like Apple Music's floating lines */
+@keyframes lshFloat{from{transform:translateY(0)}to{transform:translateY(-5px)}}
+@keyframes lshPop{0%{transform:translateY(16px) scale(.92);filter:blur(10px);opacity:.2}60%{transform:translateY(-3px) scale(1.02);filter:blur(0);opacity:1}100%{transform:none}}
+/* light-sweep: a specular band glides across the active line as it turns on */
+@keyframes lshSweep{from{--sweep:-30%}to{--sweep:130%}}
+html:not(.lite) .lshower-body>.lyr.on::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(105deg,transparent calc(var(--sweep) - 26%),rgba(255,255,255,.16) var(--sweep),transparent calc(var(--sweep) + 26%));mix-blend-mode:screen}
+html:not(.lite) .lshower-body>.lyr{position:relative}
+/* gentle breathing glow under the active line (subtle — one animation, not per-frame JS) */
+html:not(.lite) .lshower-body>.lyr.on::before{content:"";position:absolute;left:12%;right:12%;bottom:-.18em;height:.14em;border-radius:99px;background:radial-gradient(closest-side,color-mix(in srgb,var(--blood-hi,#ff3b47) 70%,transparent),transparent);filter:blur(6px);animation:lshBreath 3.2s ease-in-out infinite alternate;pointer-events:none}
+@keyframes lshBreath{from{opacity:.35;transform:scaleX(.82)}to{opacity:.8;transform:scaleX(1)}}
+/* fade the top & bottom of the scroll area like Apple Music's mask */
+.lshower-body{-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%)}
 .lshower-foot{text-align:center;padding:10px 20px max(16px,env(safe-area-inset-bottom))}
 .lshower-foot span{font:500 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.4);letter-spacing:.02em}
 .lshower-empty{display:grid;gap:10px;justify-items:center;align-content:center;height:100%;color:rgba(255,255,255,.6);font:500 16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;text-align:center}
