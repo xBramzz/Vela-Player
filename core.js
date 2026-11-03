@@ -324,10 +324,16 @@
         let dominatedByDivisor = false;
         /* Check every exact divisor lag q (lag = q*h): does q itself correlate strongly?
            Bounded by q >= lagMin, so this always terminates. */
-        for (let h = 2; ; h++) {
-          const q = Math.floor(lag / h);
-          if (q < lagMin) break;                 // divisors only get smaller — done
-          if (q * h === lag && ac[q] >= eps) { dominatedByDivisor = true; break; }
+        /* Bounded scan over candidate sub-harmonics h = 2..lag/lagMin. An unbounded
+           `for (h=2;;h++)` with `break` only on q<lagMin hung on some inputs because
+           floor(lag/h) can stall at the same value across consecutive h when lag is
+           small relative to lagMin spacing — iterate h explicitly with a hard cap. */
+        const hMax = Math.max(2, Math.floor(lag / lagMin));
+        for (let h = 2; h <= hMax; h++) {
+          const q = lag / h;
+          if (q !== Math.floor(q)) continue;     // not an exact divisor
+          if (q < lagMin) break;
+          if (ac[q] >= eps) { dominatedByDivisor = true; break; }
         }
         if (!dominatedByDivisor) best = lag;
       }
