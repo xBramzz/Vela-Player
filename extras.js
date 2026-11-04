@@ -35,7 +35,7 @@ function clearTheme(){lastHue=null;for(const k of POOL_KEYS.concat(["--wave-lo",
 /* exposed for the full-screen mesh background: current cover hue/sat (or null on the classic theme) */
 window.__detuneTheme=()=>lastHue==null?null:{h:lastHue,s:.7};
 function sync(){tb.setAttribute("aria-pressed",on);if(!on){R.classList.remove("cover-theme");clearTheme();return}
- const img=$("cover").querySelector("img");if(!img){clearTheme();R.classList.remove("cover-theme");return}
+ const cov=$("cover"),img=cov&&cov.querySelector("img");if(!img){clearTheme();R.classList.remove("cover-theme");return}
  const go=()=>{try{const r=dominant(img);if(!r)setTheme(355,.15);else setTheme(r.h,Math.max(.35,Math.min(1.1,r.s/.7)));R.classList.add("cover-theme")}catch(e){console.warn("Cover colour failed",e)}};
  img.complete&&img.naturalWidth?go():img.addEventListener("load",go,{once:true})}
 tb.onclick=()=>{on=!on;LS.set("detune-cover-theme")(on?"1":"0");sync();note(on?"Colours now follow the album cover.":"Classic blood-red theme.")};
@@ -118,6 +118,12 @@ load=function(){origLoad();shSync();
  }};
 /* ---------- full-screen lyric shower (Apple Music style) ---------- */
 const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("lshCover");let shIdx=-1,shHold=0,shPrev=null,shBgTop=true,shSeeking=false;
+/* FIX (ReferenceError: shMeta is not defined): the old big title/artist meta block that sat ABOVE
+   the progress bar was removed when the left column was rebuilt. Its updater function (shMeta) and
+   its elements went with it — but two call sites still called shMeta(), so pressing L threw before
+   the overlay could open. The NEW elements that show title/artist are #lshTitle / #lshArtist (below
+   the seek bar); shMeta() below now points at THOSE. The old block is intentionally NOT re-added. */
+const SHT=$("lshTitle"),SHAR=$("lshArtist");
 /* artist strings use "/" as the separator ("YNW Melly/YNW BSlime/Jit4 Stan") — display it as ", " */
 const shArtist=t=>String(t==null?"":t).replace(/\//g,", ").trim();
 /* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
@@ -133,7 +139,11 @@ const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(
    the img if present, otherwise fall back to the real object URL of the loaded track's cover blob —
    and if the track genuinely has no artwork we show a themed placeholder instead of nothing. */
 const shNoArt="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cdefs%3E%3CradialGradient id='g' cx='50%25' cy='38%25' r='75%25'%3E%3Cstop offset='0' stop-color='%236b0912'/%3E%3Cstop offset='1' stop-color='%230a0406'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect width='400' height='400' fill='url(%23g)'/%3E%3Ctext x='200' y='248' font-size='150' text-anchor='middle' fill='%23ff3b47' fill-opacity='.5' font-family='Georgia,serif'%3E%E2%99%AB%3C/text%3E%3C/svg%3E";
-function shCoverSrc(){try{const c=$("cover");const im=c&&c.querySelector("img");if(im&&im.src)return im.src;const t=(window.Detune&&Detune.current&&Detune.current())||(window.C_&&C_.cur&&C_.cur())||null;if(t&&t.coverUrl)return t.coverUrl;if(t&&t.cover&&!t.coverUrl)t.coverUrl=safeURL(t.cover);if(t&&t.coverUrl)return t.coverUrl}catch(e){}return shNoArt}
+/* cover source for the overlay. app.js does NOT expose window.Detune and safeURL is private to
+   app.js, so the old Detune.current()/safeURL path was dead code that could itself throw a
+   ReferenceError (caught, but it meant no artwork). Now: #cover img → the live <audio> object URL
+   (same-origin blob, always readable) → themed placeholder. */
+function shCoverSrc(){try{const c=$("cover");const im=c&&c.querySelector("img");if(im&&im.src)return im.src;if(a&&a.src&&/^blob:/.test(a.src))return a.src}catch(e){}return shNoArt}
 function shDepth(){if(lite||!synced)return;const ch=SHB.children;for(let k=0;k<ch.length;k++){const c=ch[k];c.classList.remove("pn1","pn2","pn3","pnf");if(k===shIdx||c.classList.contains("on"))continue;const d=Math.abs(k-shIdx);c.classList.add(d<=1?"pn1":d===2?"pn2":d===3?"pn3":"pnf")}}
 function shRender(){SHB.replaceChildren();shIdx=-1;
  if(!lines.length){const e=document.createElement("div");e.className="lshower-empty";const i0=document.createElement("i");i0.className="fa-solid fa-microphone-lines";const p0=document.createElement("p");p0.textContent="No lyrics for this track yet.";const s0=document.createElement("span");s0.textContent="Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";e.append(i0,p0,s0);SHB.append(e);return}
@@ -151,7 +161,7 @@ function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.cur
    the rAF loop runs ONLY while the overlay is open and never touches layout, so it can't affect
    the left column or the lyrics. Respects prefers-reduced-motion (static blobs, no pulse). */
 const reduceMotion=matchMedia("(prefers-reduced-motion: reduce)").matches;
-const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
+const SHBG=SH&&SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
 /* ================= OWN BASS ANALYSER (priority 1) =================
    WHY THE OLD VERSION NEVER PULSED — three independent killers, all found in the code:
    1. DetuneFX.freeze is set to true for the WHOLE time the shower is open (shOpen), and fx.js's
@@ -236,7 +246,7 @@ function shBassStep(t){
 function shBassStart(){if(shRun)return;shRun=true;shWire();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
 function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass")}
 /* tiny debug readout, bottom-left corner (never above the close button's z-tier) */
-(function(){shDbgEl=document.createElement("div");shDbgEl.className="lsh-bassdbg";shDbgEl.setAttribute("aria-hidden","true");shDbgEl.textContent="bass 0.00";SH.append(shDbgEl)})();
+(function(){if(!SH)return;shDbgEl=document.createElement("div");shDbgEl.className="lsh-bassdbg";shDbgEl.setAttribute("aria-hidden","true");shDbgEl.textContent="bass 0.00";SH.append(shDbgEl)})();
 /* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
 function shLiveLow(){const x=shRawLow();if(x>=0)return x;const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
  const n=an.frequencyBinCount,buf=shLiveLow.b&&(shLiveLow.b.length===n)?shLiveLow.b:(shLiveLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
@@ -281,7 +291,7 @@ function meshBuild(){if(!SHBG)return null;const w=document.createElement("div");
  const sp=document.createElement("div");sp.className="lsh-spin";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
  /* FIX (colours didn't match the cover): sample the SHOWER'S OWN cover copy first — it is the exact
     artwork being displayed and (unlike #cover img) is guaranteed to be loaded here. */
- let cols=meshColors(SHC)||meshColors($("cover").querySelector("img"));
+ let cols=meshColors(SHC)||meshColors($("cover")?.querySelector("img"));
  if(!cols){cols=meshFallback();meshPreload(meshSrc())} /* not decoded yet / tainted → grays now, real rebuild when ready */
  cols.slice(0,5).forEach((rgb,i)=>{const b=document.createElement("div");b.className="lsh-blob";
   b.style.setProperty("--c",rgb);b.style.setProperty("--x",MPOS[i][0]+"%");b.style.setProperty("--y",MPOS[i][1]+"%");
@@ -330,7 +340,17 @@ function meshStart(){if(!mesh||reduceMotion||lite)return;
    const sc=1+meshB*.2;b.style.setProperty("--sx",sc.toFixed(3));b.style.setProperty("--sy",(sc*(1+.05*Math.sin(x*f.c+ph))).toFixed(3));
    b.style.opacity=(.62+meshB*.22).toFixed(3)}};
  meshRaf=requestAnimationFrame(step)}
-function shArt(v){const img=$("cover").querySelector("img"),src=(img&&img.src)||shCoverSrc();
+/* FIX (left column meta): shMeta() was deleted together with the old big title/artist block above
+   the progress bar, but shOpen()/shSync() still called it → "ReferenceError: shMeta is not defined"
+   killed shOpen before SH.hidden=false, so L did nothing. Recreated here pointing at the NEW
+   elements (#lshTitle / #lshArtist). Every DOM lookup below is null-guarded so a missing element can
+   never break shOpen again; "/" artist separators become ", " and long text truncates via the CSS
+   ellipsis rules on .lsh-name/.lsh-sub (extras.css) — no marquee JS needed anymore. */
+function shMeta(){const t=hasTrack()?$("title")?.textContent||"":"";const ar=hasTrack()?shArtist($("artist")?.textContent||""):"";
+ if(SHT){SHT.textContent=t||"Nothing playing"}
+ if(SHAR){SHAR.textContent=ar||"Add a song to begin"}}
+function shArt(v){const cov=$("cover"),img=cov&&cov.querySelector("img"),src=(img&&img.src)||shCoverSrc();
+ if(!SHA||!SHB2)return; /* left column art nodes missing (cached/old markup): skip, never throw */
  const top=v?SHA:SHB2,bot=v?SHB2:SHA; /* two stacked copies of the blurred cover CROSSFADE (~1s CSS transition) on track change */
  if(top.getAttribute("src")!==src)top.src=src;top.classList.add("lsh-vis");top.classList.remove("lsh-gone");
  bot.classList.remove("lsh-vis");bot.classList.add("lsh-gone");shBgTop=v;
@@ -340,7 +360,7 @@ function shArt(v){const img=$("cover").querySelector("img"),src=(img&&img.src)||
 function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
  if(v){SH.classList.remove("lsh-out");document.body.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
-  shMeta();/* "/" separators -> ", " + ellipsis/marquee measurement (see shMeta) */
+  shMeta();/* new #lshTitle/#lshArtist: "/" separators -> ", " + CSS ellipsis truncation (see shMeta) */
   /* pause ALL background painting while fullscreen — the shower covers everything, so the
      waveform canvas + embers are pure wasted GPU work behind it (this was the flicker/lag) */
   if(window.DetuneFX)DetuneFX.freeze=true;document.body.classList.add("lyrshow-open");
@@ -350,7 +370,7 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
      keep the fixed-position overlay (it already covers the whole viewport). */
   try{const p=(document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen());if(p&&p.catch)p.catch(()=>{})}catch{}
   document.documentElement.dataset.shInit="0";
-  setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose").focus()},60)}
+  setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose")?.focus()},60)}
  else{if(SH.hidden)return;shFsOff();
   /* close: fade out ONLY the root overlay element with one opacity transition — no child of the
      overlay gets its style touched (the old code put .lsh-out on SH itself and also relied on a
@@ -379,52 +399,56 @@ function shModes(){const s=$("shuffle"),r=$("repeat"),SB=$("lshShuffle"),RB=$("l
  if(SB&&s){const on=s.getAttribute("aria-pressed")==="true";SB.classList.toggle("on",on);SB.setAttribute("aria-pressed",String(on))}
  if(RB&&r){const m=/one/.test(r.textContent)?"one":/all/.test(r.textContent)?"all":"off";
   RB.classList.toggle("on",m!=="off");RB.classList.toggle("one",m==="one");RB.setAttribute("aria-pressed",String(m!=="off"));RB.title="Repeat ("+m+") (R)"}}
-function shUI(){if(SH.hidden)return;
- $("lshCur").textContent=fmtT(a.currentTime);
+function shUI(){if(!SH||SH.hidden)return;
+ const cu=$("lshCur");if(cu)cu.textContent=fmtT(a.currentTime);
  /* Apple-style: elapsed left, REMAINING as −m:ss right (falls back to total without metadata) */
- $("lshDur").textContent=Number.isFinite(a.duration)?"-"+fmtT(Math.max(0,a.duration-a.currentTime)):fmtT(a.duration);
+ const du=$("lshDur");if(du)du.textContent=Number.isFinite(a.duration)?"-"+fmtT(Math.max(0,a.duration-a.currentTime)):fmtT(a.duration);
  shProgress();shModes();
  const playing=!a.paused&&!a.ended;
- $("lshPlayIcon").innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
- $("lshPlay").setAttribute("aria-label",playing?"Pause":"Play")}
+ const pi=$("lshPlayIcon");if(pi)pi.innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
+ $("lshPlay")?.setAttribute("aria-label",playing?"Pause":"Play")}
 /* FIX 1b (left column invisible): shSync used to run whenever the main-app #title/#artist text
    changed — even while the shower was ALREADY open. Re-applying SH.hidden=false / re-rendering on
    top of an open overlay restarted its entrance animation from opacity:0 (the "flash then gone"
    symptom). Now a track change while open only updates CONTENT (cover src, title, artist, time,
    play/pause icon) — the left column itself is static markup in index.html and is never removed. */
-function shSync(){if(!SH.hidden){shMeta();/* "/" separators -> ", " + ellipsis/marquee measurement (see shMeta) */shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}}
-$("lshClose").onclick=()=>shOpen(false);
-$("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
-$("lshPrev").onclick=()=>{$("prev")?.click()};
-$("lshNext").onclick=()=>{$("next")?.click()};
+function shSync(){if(!SH||SH.hidden)return;shMeta();/* new #lshTitle/#lshArtist: "/" -> ", " + CSS ellipsis (see shMeta) */shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}
+/* every overlay listener below is attached through ?. so a missing/renamed element can never throw
+   at module load (a load-time throw would leave the whole extras IIFE dead and L permanently broken) */
+const CLS=$("lshClose"),PLB=$("lshPlay");
+if(CLS)CLS.onclick=()=>shOpen(false);
+if(PLB)PLB.onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
+$("lshPrev")?.addEventListener("click",()=>{$("prev")?.click()});
+$("lshNext")?.addEventListener("click",()=>{$("next")?.click()});
 /* shuffle / repeat proxy the MAIN player's buttons so there is only ONE source of truth; shModes()
    then mirrors the real state back onto these buttons (dot + 100% white when on, no dot + 60% off) */
-$("lshShuffle").onclick=()=>{$("shuffle")?.click();shModes()};
-$("lshRepeat").onclick=()=>{$("repeat")?.click();shModes()};
-{SK.addEventListener("input",()=>{shSeeking=true;SK.classList.add("lsh-drag");if(Number.isFinite(a.duration)){a.currentTime=a.duration*(+SK.value/1000);shProgress()}});
+$("lshShuffle")?.addEventListener("click",()=>{$("shuffle")?.click();shModes()});
+$("lshRepeat")?.addEventListener("click",()=>{$("repeat")?.click();shModes()});
+if(SK){SK.addEventListener("input",()=>{shSeeking=true;SK.classList.add("lsh-drag");if(Number.isFinite(a.duration)){a.currentTime=a.duration*(+SK.value/1000);shProgress()}});
  SK.addEventListener("change",()=>{shSeeking=false;SK.classList.remove("lsh-drag");shProgress()});SK.addEventListener("pointerup",()=>{shSeeking=false;SK.classList.remove("lsh-drag");shProgress()});
  /* keep --progress (fill %) fresh even for programmatic value writes — fx.js's global --p
     publisher is frozen while the shower is open */
- new MutationObserver(()=>{if(!SH.hidden)shProgress()}).observe(SK,{attributes:true,attributeFilter:["value"]});shProgress()}
+ new MutationObserver(()=>{if(!SH?.hidden)shProgress()}).observe(SK,{attributes:true,attributeFilter:["value"]});shProgress()}
 /* #shuffle/#repeat can also be toggled from the main app or the S/R keys — follow them live */
 for(const id of["shuffle","repeat"]){const el=$(id);if(el)new MutationObserver(shModes).observe(el,{childList:true,characterData:true,subtree:true,attributes:true,attributeFilter:["aria-pressed","textContent"]})}
 for(const ev of["timeupdate","durationchange"])a.addEventListener(ev,shUI);
 a.addEventListener("seeked",shProgress); /* never leave the fill stuck at a hover/seek-preview position */
 a.addEventListener("play",shUI);a.addEventListener("pause",shUI);a.addEventListener("ended",shUI);
-new MutationObserver(shSync).observe($("title"),{childList:true,characterData:true,subtree:true});
-new MutationObserver(shSync).observe($("artist"),{childList:true,characterData:true,subtree:true});
-document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&!SH.hidden){/* browser left FS (e.g. F11/Esc at OS level): keep the fixed overlay, no re-request */}});
-SH.addEventListener("click",e=>{if(e.target===SH||e.target.classList.contains("lshower-frost")||e.target.classList.contains("lshower-bg"))shOpen(false)});
-SHB.addEventListener("click",e=>{const p=e.target.closest(".syn");if(!p)return;a.currentTime=Math.max(0,lines[+p.dataset.i].t-.3);shHold=0;shTick(true)});
+const tEl=$("title"),arEl=$("artist");
+if(tEl)new MutationObserver(shSync).observe(tEl,{childList:true,characterData:true,subtree:true});
+if(arEl)new MutationObserver(shSync).observe(arEl,{childList:true,characterData:true,subtree:true});
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&!SH?.hidden){/* browser left FS (e.g. F11/Esc at OS level): keep the fixed overlay, no re-request */}});
+if(SH)SH.addEventListener("click",e=>{if(e.target===SH||e.target.classList.contains("lshower-frost")||e.target.classList.contains("lshower-bg"))shOpen(false)});
+if(SHB){SHB.addEventListener("click",e=>{const p=e.target.closest(".syn");if(!p)return;const ln=lines[+p.dataset.i];if(!ln)return;a.currentTime=Math.max(0,ln.t-.3);shHold=0;shTick(true)});
 for(const ev of["wheel","touchmove"])SHB.addEventListener(ev,()=>shHold=Date.now()+4000,{passive:true});
 SHB.addEventListener("keydown",e=>{if(!synced)return;let n=null;
  if(e.key==="ArrowDown")n=Math.min(lines.length-1,shIdx+1);
  else if(e.key==="ArrowUp")n=Math.max(0,shIdx-1);
  else if(e.key==="Home")n=0;else if(e.key==="End")n=lines.length-1;
  else if(e.key==="Enter"&&e.target.classList.contains("syn")){e.target.click();return}
- if(n!=null){e.preventDefault();const el=SHB.children[n];if(el){a.currentTime=Math.max(0,lines[n].t-.3);shHold=Date.now()+4000;shTick(true);if(el)shScrollTo(el)}}});
+ if(n!=null){e.preventDefault();const el=SHB.children[n];if(el){a.currentTime=Math.max(0,lines[n].t-.3);shHold=Date.now()+4000;shTick(true);shScrollTo(el)}}})}
 a.addEventListener("timeupdate",()=>shTick());a.addEventListener("seeked",()=>shTick(true));
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH.hidden){shOpen(false);e.stopPropagation();return}if(e.key==="Escape"&&!P.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l"){if(!SH.hidden){shOpen(false);return}shOpen(SH.hidden)}});
-$("shortcuts").querySelector("ul").insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH?.hidden){shOpen(false);e.stopPropagation();return}if(e.key==="Escape"&&!P?.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l"){if(!SH?.hidden){shOpen(false);return}if(SH)shOpen(SH.hidden)}});
+$("shortcuts")?.querySelector("ul")?.insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
 load();
 })();
