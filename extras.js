@@ -249,12 +249,13 @@ function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
 /* ================= AUDIOMOTION BASS GLOW (optional, extras-only) =================
    audiomotion-analyzer renders NO numbers itself — the readout at the bottom was our own
    debug div ("bass 0.42 · avg 0.11"), now removed (see shBassStep / the old lsh-bassdbg IIFE).
-   The analyzer runs in MODE 2 (circular) purely as a low-frequency energy SOURCE: its getEnergy
-   presets return smoothed LOW/MID/HIGH values computed from the same master tap we already probe.
-   Those drive .lsh-bassglow behind the mesh — the visible background pulses with the bass.
-   Attaches via DetuneApp.audioGraph; never calls createMediaElementSource (app.js owns #audio;
-   double-binding throws + re-routes sound) and never connectOutput() (speakers untouched). */
-let ama=null,amaCanvas=null,amaTimer=0,amaGlow=null,amaLast={t:0,lo:0,mid:0,hi:0};
+   DATA-ONLY instance: useCanvas:false → nothing is drawn and no canvas is appended to the page;
+   getEnergy() still works because the analyzer's rAF loop updates the FFT even when the draw
+   body skips all painting. connectSpeakers:false → AMA never connects its output to
+   ctx.destination, so app.js's audio path is untouched. source:G.master taps the FINAL master
+   GainNode (post pitch-worklet/fx chain); createMediaElementSource is never called again.
+   Those values drive .lsh-bassglow behind the mesh — the visible background pulses with the bass. */
+let ama=null,amaGlow=null,amaLast={t:0,lo:0,mid:0,hi:0};
 /* The glow div does NOT depend on audiomotion-analyzer loading — create it on its own so the
    background reacts even if the vendored script is stale/missing (e.g. old service-worker cache). */
 function amaGlowMake(){if(amaGlow||!SHBG)return null;
@@ -269,23 +270,26 @@ function amaBuild(){if(!SHBG)return;amaGlowMake(); /* glow first, analyzer secon
  try{
   if(ama&&(ama.isDestroyed||ama.audioCtx!==G.ctx)){amaKill()} /* torn down / AudioContext replaced → rebuild */
   if(!ama){
-   amaCanvas=document.createElement("canvas");amaCanvas.className="lsh-ama";amaCanvas.setAttribute("aria-hidden","true");
-   SHBG.append(amaCanvas); /* invisible (opacity:0), below .lsh-bassglow — data source only */
-   ama=new AudioMotionAnalyzer(G.ctx,{canvas:amaCanvas,sourceNode:G.master,
-    mode:2, /* circular: used only for its LOW/MID/HIGH energy model — nothing here draws bars/LEDs */
-    isMedi:false,isBassBlob:false,showLaneLines:false,showBgBars:0,showCap:false,isMirrored:false,
-    dimmer:0,overlay:false,frontLayers:false,
-    minFreq:20,maxFreq:16000,smoothing:.8,multAgility:.7});
-   /* sourceNode connects with keepConnected=false by default — master keeps feeding
-      ctx.destination untouched; the analyzer only PROBEs it. */
-  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas)}
-  if(amaGlow.parentNode!==SHBG)SHBG.append(amaGlow); /* keep it LAST inside .lshower-bg → paints over mesh */
+   /* DATA-ONLY instance: useCanvas:false → no bars/LEDs are ever painted (AMA still creates an
+      off-DOM canvas internally and runs its rAF loop — that's what updates the FFT, so
+      getEnergy() keeps working). connectSpeakers:false → AMA never connects its output to
+      ctx.destination; audio stays on app.js's own path.
+      source:G.master taps the FINAL master GainNode (post pitch-worklet/fx chain) as a probe —
+      createMediaElementSource is never called again (app.js already owns <audio id="audio">). */
+   ama=new AudioMotionAnalyzer({
+    source:G.master,
+    connectSpeakers:false,
+    useCanvas:false,
+    fftSize:8192,
+    minFreq:20,maxFreq:16000,
+    smoothing:.7
+   });
+  }
+  if(amaGlow&&SHBG&&amaGlow.parentNode!==SHBG)SHBG.append(amaGlow); /* keep it LAST inside .lshower-bg → paints over mesh */
   if(!ama.isOn)ama.toggleAnalyzer(true);
-  clearInterval(amaTimer);amaTimer=setInterval(()=>{try{if(ama&&ama.isOn&&G.master)G.master.connect(ama)}catch{}},250); /* rAF-throttle keep-alive: re-assert the probe tap (idempotent, adds no audible path) */
  }catch(e){amaStop()}}
-function amaStop(){clearInterval(amaTimer);amaTimer=0;if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
-function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null;
- if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}}
+function amaStop(){if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
+function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null}
 /* Feed AudioMotion's smoothed LOW band into the CSS vars (--bgLo/--bgMid/--bgHi). Called once per
    frame from shBassStep. Falls back to our own kick follower (shOut) when the analyzer isn't up
    (script missing / graph not built yet), so the glow ALWAYS tracks the bass somehow. */
@@ -295,7 +299,7 @@ function amaGlowStep(t){
  let lo=-1,mid=0,hi=0;
  try{if(ama&&ama.isOn){lo=ama.getEnergy("bass");mid=ama.getEnergy("lowMid");hi=ama.getEnergy("mid")}}catch{lo=-1} /* presets: bass 20–250 Hz, lowMid 250–500, mid 500–2k */
  if(!(lo>=0)){lo=Math.min(1,shOut*1.15)} /* fallback: shared kick follower from shRawLow()/shBassStep */
- const dt=t-amaLast.t;if(!(dt>0)||dt>.25)amaLast.t=t;
+ const dt=Math.min(.1,Math.max(0,(t-amaLast.t)/1000));amaLast.t=t;
  const rise=1-Math.exp(-dt/.05),fall=1-Math.exp(-dt/.3); /* fast attack / smooth release */
  amaLast.lo+=(Math.min(1,lo)-amaLast.lo)*(lo>amaLast.lo?rise:fall);
  amaLast.mid+=(Math.min(1,mid)-amaLast.mid)*(mid>amaLast.mid?rise:fall);
@@ -369,7 +373,7 @@ function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;const wrap=n.p
     amaGlowMake/amaBuild APPEND the glow at the end. If the glow ever loses that race it sits BELOW
     the opaque base cover img and disappears. Belt & braces: pin explicit z-tiers so DOM order can
     never bury it — pulse layer 0, analyzer canvas 0, glow 1 (still under .lshower-grid content). */
- if(amaGlow)amaGlow.style.zIndex="1";if(amaCanvas)amaCanvas.style.zIndex="0";wrap.style.zIndex="0";
+ if(amaGlow)amaGlow.style.zIndex="1";wrap.style.zIndex="0";
  mesh=n; /* --bg-bass AND --lshBass are published on the .lsh-mesh node (inherits to .bg-pulse/.lsh-spin) */
  amaGlowTint(); /* glow follows the new cover colours too */
  if(reduceMotion||lite){meshStop();shBassStart();return} /* static blobs — but the pulse still runs */

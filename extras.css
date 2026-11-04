@@ -381,10 +381,6 @@ html.lite .lsh-spin{transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}
 html.lite .lsh-blob{transform:translate(-50%,-50%) translateZ(0)}
 html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
 @media(prefers-reduced-motion:reduce){.lshower-body>.lyr.pn1,.lshower-body>.lyr.pn2,.lshower-body>.lyr.pn3,.lshower-body>.lyr.pnf{filter:none;color:rgba(255,255,255,.5)}.lsh-art{animation:none!important}}
-/* audiomotion-analyzer spectrum — lives inside .lshower-bg (z-tier 0), never above lyrics */
-/* AudioMotion canvas: INVISIBLE — the analyzer exists only as a LOW-band energy source feeding
-   .lsh-bassglow below. No bars, no numbers, nothing drawn over the lyrics. */
-.lsh-ama{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:0;pointer-events:none;z-index:0}
 /* BASS-REACTIVE GLOW: extras.js writes --bgLo (20–250 Hz), --bgMid (250–500 Hz) and --bgHi
    (500–2 kHz) every frame (AudioMotion getEnergy, fast attack / smooth release). The centre
    radial pulses with the bass (scale + opacity + brightness); mesh colours bleed through at
