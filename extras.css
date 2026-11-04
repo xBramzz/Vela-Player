@@ -139,7 +139,7 @@ body.lsh-out .lshower{opacity:0}
    dark/dull): brightness .7 / saturate 1.35 / opacity .75 — a red-orange-brown cover now reads warm,
    not black-gray. Bass drives ONLY --bg-bass here: a tiny brightness/scale lift (the cover "breathes"
    very slightly but never drifts or flashes — extras.js caps the values). */
-.lshower-bg img{--bg-bass:0;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(calc(.7 + var(--bg-bass)*.08)) saturate(calc(1.35 + var(--bg-bass)*.15));transform:scale(calc(1.6 + var(--bg-bass)*.015)) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity}
+.lshower-bg img{--bg-bass:0;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(calc(.7 + var(--bg-bass)*.16)) saturate(calc(1.35 + var(--bg-bass)*.25));transform:scale(calc(1.6 + var(--bg-bass)*.045)) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity,filter,transform}
 .lshower-bg img.lsh-vis{opacity:.75}
 .lshower-bg img.lsh-gone{opacity:0}
 /* ---- MOVING MESH: 4–5 REAL sampled cover colours (.lsh-blob) inside a slow-rotating carousel
@@ -375,7 +375,7 @@ html:not(.lite) .lshower-body>.lyr{position:relative}
 /* reduced motion & lite mode — STATIC blobs (no drift, no pulse, no spin), plain colours. The bass
    rAF loop never runs in these modes (extras.js), so --lshBass stays 0 and the calc()s collapse to
    their resting values; we still pin transform/opacity/filter here defensively. */
-@media(prefers-reduced-motion:reduce){.lshower{animation:none;transition:none}.lsh-mesh-in,.lsh-mesh-out{animation:none}.lsh-spin{animation:lshSpin 60s linear infinite;transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}.lsh-blob{transform:translate(-50%,-50%) translateZ(0)}.lshower-bg img{transition:none;transform:scale(1.6) translateZ(0)}.lshower-body>.lyr{transition:color .3s ease}.lshower-body>.lyr.on{font-weight:800}}
+@media(prefers-reduced-motion:reduce){.lshower{animation:none;transition:none}.lsh-mesh-in,.lsh-mesh-out{animation:none}.lsh-spin{animation:lshSpin 60s linear infinite;transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}.lsh-blob{transform:translate(-50%,-50%) translateZ(0)}.lshower-bg img{transition:none} /* reduced-motion: no crossfade, but KEEP the calc() bass transform/filter on --bg-bass (the old static transform:scale(1.6) here froze the cover reaction completely) */.lshower-body>.lyr{transition:color .3s ease}.lshower-body>.lyr.on{font-weight:800}}
 html.lite .lsh-mesh-in,html.lite .lsh-mesh-out{animation:none}
 html.lite .lsh-spin{transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}
 html.lite .lsh-blob{transform:translate(-50%,-50%) translateZ(0)}
@@ -390,5 +390,10 @@ html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
    PREPENDED — DOM order alone kept it on top. Pin explicit tiers so the glow can never be buried
    by the base cover <img> or a rebuilt pulse layer, regardless of insertion order. */
 .lshower-bg img,.lshower-frost{z-index:0}
+/* FIX (cover never reacted): the reduced-motion block used to pin .lshower-bg img's transform to a
+   STATIC scale(1.6), which froze out the bass pulse entirely for users with "reduce motion" on —
+   and any ancestor with a pinned transform could clip an inherited --bg-bass. Now it KEEPS the
+   calc() bass reaction (brightness/saturate/scale via --bg-bass, written directly on the <img> by
+   coverBassStep in extras.js); only the opacity crossfade transition is disabled there. */
 @media(prefers-reduced-motion:reduce){.lsh-bassglow{transform:none;opacity:calc(.18 + var(--bgLo)*.16)}}
 .lite .lsh-bassglow{opacity:calc(.1 + var(--bgLo)*.2)}
