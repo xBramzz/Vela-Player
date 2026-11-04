@@ -97,8 +97,15 @@ html.lite .lyrics{background:color-mix(in srgb,var(--blood-dk) 55%,black)}
 @media(max-width:420px){.rowacts .q{display:none}}
 
 /* ---------- Full-screen lyric shower (Apple Music style, glassmorphism) ---------- */
-.lshower{position:fixed;inset:0;width:100vw;height:100vh;z-index:90;display:flex;flex-direction:column;isolation:isolate;color:#fff;background:var(--pool2,#2a0308)}
-.lshower[hidden]{display:none}
+/* ---- FIX 1: true full-viewport overlay --------------------------------------
+   Direct child of <body> (moved there in markup + defensively in extras.js), so no
+   ancestor's padding/width/transform can clip it. inset:0 + 100vw/100vh + margin:0 +
+   max-width:none guarantees edge-to-edge coverage even if an inherited rule or UA
+   stylesheet constrains width; z-index above every app layer (.lyrics is z:7, modals lower). */
+.lshower{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;inset:0!important;margin:0!important;padding:0!important;width:100vw!important;max-width:none!important;height:100vh!important;min-height:100vh!important;max-height:none!important;z-index:2147483000!important;display:flex!important;flex-direction:column;isolation:isolate;overflow:hidden;color:#fff;background:var(--pool2,#2a0308);border:0;border-radius:0}
+@supports(height:100dvh){.lshower{height:100dvh!important}}
+.lshower,.lshower *{box-sizing:border-box}
+.lshower[hidden]{display:none!important}
 html:not(.lite) .lshower{animation:lshIn .42s var(--ease,cubic-bezier(.2,.8,.2,1))}
 html:not(.lite) .lshower.lsh-out{animation:lshOut .3s ease forwards}
 @keyframes lshIn{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:none}}
@@ -109,13 +116,17 @@ html:not(.lite) .lshower.lsh-out{animation:lshOut .3s ease forwards}
 .lshower-bg img.lsh-vis{opacity:1}
 html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infinite alternate}
 @keyframes lshDrift{from{transform:scale(1.1) translate(-1.5%,1%)}to{transform:scale(1.22) translate(1.5%,-1%)}}
-.lshower-frost{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,3,6,.5),rgba(8,3,6,.78)),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 22%,transparent),transparent 60%)}
+.lshower-frost{position:absolute;inset:0;background:linear-gradient(160deg,color-mix(in srgb,var(--blood-dk,#6b0912) 62%,rgba(6,2,4,.86)) 0%,rgba(6,2,4,.72) 45%,color-mix(in srgb,var(--pool2,#2a0308) 88%,black) 100%),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 26%,transparent),transparent 60%)}
 .lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px}
 .lshower-close:hover{background:rgba(255,255,255,.2)!important;transform:scale(1.06)}
 /* REMOVED (old centred modal head): .lshower-head / .lshower-kicker / .lshower-head h2 / .lshower-head p — replaced by the two-column layout below */
 /* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
-.lshower-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:clamp(18px,4vw,56px);align-items:center;padding:clamp(18px,4vh,48px) clamp(20px,4vw,64px) 0}
-.lshower-main{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;text-align:center;text-shadow:0 2px 22px rgba(0,0,0,.55)}
+/* ---- FIX 2: two columns filling the FULL screen (grid overlays the whole viewport,
+   the hint footer floats on top of it instead of eating a row and leaving a grey strip) ---- */
+.lshower-grid{position:absolute;inset:0;z-index:1;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:clamp(18px,4vw,56px);align-items:stretch;justify-items:stretch;padding:clamp(18px,4vh,48px) clamp(20px,4vw,64px) clamp(44px,7vh,64px);background:none;border:0;box-shadow:none}
+/* no card/box around the left column — kill any .glass-style background, border or radius it could inherit */
+.lshower-main{background:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.lshower-main{grid-column:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;height:100%;text-align:center;text-shadow:0 2px 22px rgba(0,0,0,.55)}
 .lsh-art{width:min(38vw,44vh,440px);aspect-ratio:1;border-radius:18px;overflow:hidden;background:repeating-radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blood-dk) 80%,black) 0 3px,color-mix(in srgb,var(--pool2) 80%,black) 3px 5px),var(--pool2);box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--blood) 45%,transparent),0 0 0 1px rgba(255,255,255,.08)}
 .lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
 html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ease,cubic-bezier(.2,.8,.2,1)) both}
@@ -141,7 +152,7 @@ html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ea
  .lsh-ctrls{display:none}
  .lsh-seek{margin-top:2px}
 }
-.lshower-body{position:relative;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:28% 24px 60%;text-align:left}
+.lshower-body{position:relative;grid-column:2;min-width:0;min-height:0;height:100%;display:block;visibility:visible;opacity:1;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:28% 24px 60%;text-align:left}
 .lshower-body::-webkit-scrollbar{display:none;width:0;height:0}
 .lshower-body>.lyr{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,3.4vw,52px);line-height:1.32;letter-spacing:-.022em;margin:0;padding:10px 14px;max-width:100%;color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
 .lshower-body>.lyr.gap{min-height:1.4em;pointer-events:none}
@@ -161,6 +172,10 @@ html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ea
 body.lyrshow-open .bg,body.lyrshow-open .fog,body.lyrshow-open .yard,body.lyrshow-open .embers,
 body.lyrshow-open #visual,body.lyrshow-open .stage::after,body.lyrshow-open body::before,
 body.lyrshow-open body::after{display:none!important;animation:none!important}
+/* also crush the app itself behind the overlay: opacity 0 keeps layout (no reflow when closing)
+   but guarantees no pixel of the player, panels or grey shell edge can show around the shower */
+body.lyrshow-open main,body.lyrshow-open .fab,body.lyrshow-open .helpbtn,body.lyrshow-open .modal:not(#shortcuts),body.lyrshow-open .toast{opacity:0!important;pointer-events:none!important}
+body.lyrshow-open{padding:0!important;margin:0!important}
 /* ---- lyric shower effects ---- */
 @property --lshGlow{syntax:'<color>';inherits:false;initial-value:rgba(255,59,71,0)}
 @property --sweep{syntax:'<percentage>';inherits:false;initial-value:-30%}
@@ -177,7 +192,7 @@ html:not(.lite) .lshower-body>.lyr.on::before{content:"";position:absolute;left:
 @keyframes lshBreath{from{opacity:.35;transform:scaleX(.82)}to{opacity:.8;transform:scaleX(1)}}
 /* fade the top & bottom of the scroll area like Apple Music's mask */
 .lshower-body{-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%)}
-.lshower-foot{text-align:center;padding:10px 20px max(16px,env(safe-area-inset-bottom))}
+.lshower-foot{position:absolute;left:0;right:0;bottom:0;z-index:2;text-align:center;padding:10px 20px max(14px,env(safe-area-inset-bottom));pointer-events:none}
 .lshower-foot span{font:500 12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.4);letter-spacing:.02em}
 .lshower-empty{display:grid;gap:10px;justify-items:center;align-content:center;height:100%;color:rgba(255,255,255,.6);font:500 16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;text-align:center}
 .lshower-empty i{font-size:38px;opacity:.6}

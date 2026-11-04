@@ -255,7 +255,9 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 <input id="lyrFile" type="file" accept=".lrc,.txt,text/plain" hidden>
 <div class="lyrbody" id="lyrBody" tabindex="0"></div>
 <div class="lyredit" id="lyrEditBox" hidden><textarea id="lyrText" aria-label="Lyrics text" placeholder="Paste lyrics here. Lines with timestamps like [01:23.45] will follow the song."></textarea><div class="lyrtools"><button class="secondary" id="lyrSave"><i class="fa-solid fa-check" aria-hidden="true"></i>Save</button><button class="secondary" id="lyrCancel">Cancel</button></div></div>
-<!-- Apple-Music-style full-screen lyric shower (built by extras.js; kept in markup so it works even if innerHTML paths change) -->
+</section>
+<!-- Apple-Music-style full-screen lyric shower. Direct child of <body> (appended here by hand,
+     and re-parented defensively by extras.js) so no ancestor's padding/width/transform can clip it. -->
 <div class="lshower" id="lshower" role="dialog" aria-modal="true" aria-label="Full-screen lyrics" hidden>
 <div class="lshower-bg" aria-hidden="true"><img id="lshArt" alt=""><img id="lshArtB" alt=""><div class="lshower-frost"></div></div>
 <button class="lshower-close secondary icon" id="lshClose" title="Close (Esc)" aria-label="Close full-screen lyrics"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
@@ -275,7 +277,6 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 </div>
 <div class="lshower-foot"><span id="lshHint">Click a line to jump · ↑↓ to browse · L or Esc to close</span></div>
 </div>
-</section>
 <audio id="audio" preload="metadata"></audio>
 <audio id="audioB" preload="auto" hidden aria-hidden="true"></audio>
 <script src="./core.js" defer></script>
