@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "audiomotion-analyzer": "^4.5.4",
     "jsdom": "^29.1.1"
   }
 }
