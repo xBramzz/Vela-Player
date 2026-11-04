@@ -252,6 +252,9 @@ async function setupAudio() {
   compressor.connect(analyser);
   { const zg = ctx.createGain(); zg.gain.value = 0; analyser.connect(zg); zg.connect(ctx.destination); }
   window.DetuneFX && (DetuneFX.analyser = analyser);
+  /* publish the live graph so extras.js (lyric-shower probe) and AudioMotion can attach
+     to the FINAL master output without re-calling createMediaElementSource */
+  window.DetuneApp && (DetuneApp.audioGraph = { ctx, source, pitchNode, filters, compressor, master, analyser, dry, wet, convolver });
   applySettings();
 }
 function ramp(param, value, time = 0.05) {
@@ -540,6 +543,7 @@ async function playTrack(id, autoplay = true) {
     console.error("Audio engine setup failed", e);
     try { source?.disconnect(); } catch { /* ignore */ }
     analyser = null;
+    window.DetuneApp && (DetuneApp.audioGraph = null); /* stale graph handle → extras.js rebuilds its probe */
     if (ctx && ctx.state !== "closed") { try { await ctx.close(); } catch { /* ignore */ } }
     ctx = null; filters = []; master = null; compressor = null; pitchNode = null;
     say(`Audio engine issue: ${e?.message || e}. Playback may be degraded.`);

@@ -375,3 +375,7 @@ html.lite .lsh-spin{transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}
 html.lite .lsh-blob{transform:translate(-50%,-50%) translateZ(0)}
 html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
 @media(prefers-reduced-motion:reduce){.lshower-body>.lyr.pn1,.lshower-body>.lyr.pn2,.lshower-body>.lyr.pn3,.lshower-body>.lyr.pnf{filter:none;color:rgba(255,255,255,.5)}.lsh-art{animation:none!important}}
+/* audiomotion-analyzer spectrum — lives inside .lshower-bg (z-tier 0), never above lyrics */
+.lsh-ama{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:.5;mix-blend-mode:screen;pointer-events:none;z-index:0}
+@media(prefers-reduced-motion:reduce){.lsh-ama{opacity:.32}}
+.lite .lsh-ama{opacity:.32}

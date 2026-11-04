@@ -243,8 +243,36 @@ function shBassStep(t){
   shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
  if(mesh)mesh.style.setProperty("--bg-bass",shOut.toFixed(3)); /* ONE variable, on the pulse wrapper */
  if(t-shDbg>120){shDbg=t;if(shDbgEl)shDbgEl.textContent="bass "+shOut.toFixed(2)+" · avg "+shAvg.toFixed(2)+(shAnalyser?"":" · no analyser")}}
-function shBassStart(){if(shRun)return;shRun=true;shWire();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
-function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass")}
+function shBassStart(){if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
+function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass");amaStop()}
+/* ================= AUDIOMOTION SPECTRUM (optional, extras-only) =================
+   npm i audiomotion-analyzer → vendored UMD build loaded before this file.
+   Attaches to the app's FINAL master output via DetuneApp.audioGraph — never calls
+   createMediaElementSource (app.js owns #audio; double-binding throws + re-routes sound). */
+let ama=null,amaCanvas=null,amaTimer=0;
+function amaOk(){return typeof window.AudioMotionAnalyzer==="function"}
+function amaBuild(){if(!SHBG||!amaOk())return;const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return;
+ try{
+  if(ama&&ama.isDestroyed){amaKill()} /* instance torn down → full rebuild */
+  else if(ama&&ama.audioCtx!==G.ctx){amaKill()} /* AudioContext replaced (teardown/retry) → rebuild */
+  if(!ama){
+   amaCanvas=document.createElement("canvas");amaCanvas.className="lsh-ama";amaCanvas.setAttribute("aria-hidden","true");
+   SHBG.append(amaCanvas);
+   ama=new AudioMotionAnalyzer(G.ctx,{canvas:amaCanvas,sourceNode:G.master,
+    mode:0, /* 0 = Spectrum bars */
+    isVari:false,nbBars:36,barWidth:.75,barSpaceRatio:1.25,
+    smoothing:.8,multiplier:2.4,minFreq:20,maxFreq:16000,
+    colorStops:{0:"hsl(340,90%,55%)",.5:"hsl(20,90%,55%)",1:"hsl(200,90%,60%)"},
+    gradientColor:"#2a2a30",glow:.4,glowColor:"#fff",ledDef:"rounded",
+    reflex:true,overlay:true,frontLayers:false,autoScale:false});
+   /* sourceNode was connected with keepConnected=false by default — master keeps feeding
+      ctx.destination untouched; the analyzer only PROBEs it. Never call connectOutput(). */
+  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas)}
+  if(!ama.isOn)ama.toggleAnalyzer(true);
+  clearInterval(amaTimer);amaTimer=setInterval(()=>{try{if(ama&&ama.isOn&&G.master)G.master.connect(ama)}catch{}},250); /* rAF-throttle keep-alive: re-assert the probe tap (idempotent, adds no audible path) */
+ }catch(e){amaStop()}}
+function amaStop(){clearInterval(amaTimer);amaTimer=0;if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
+function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null;if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}}
 /* tiny debug readout, bottom-left corner (never above the close button's z-tier) */
 (function(){if(!SH)return;shDbgEl=document.createElement("div");shDbgEl.className="lsh-bassdbg";shDbgEl.setAttribute("aria-hidden","true");shDbgEl.textContent="bass 0.00";SH.append(shDbgEl)})();
 /* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
@@ -452,3 +480,5 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH?.hidden){shOpen
 $("shortcuts")?.querySelector("ul")?.insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
 load();
 })();
+/* teardown hook: if the app ever fully closes its AudioContext, drop our analyzer instance */
+window.DetuneAMA={kill:amaKill};
