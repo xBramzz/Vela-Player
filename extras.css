@@ -102,7 +102,7 @@ html.lite .lyrics{background:color-mix(in srgb,var(--blood-dk) 55%,black)}
    ancestor's padding/width/transform can clip it. inset:0 + 100vw/100vh + margin:0 +
    max-width:none guarantees edge-to-edge coverage even if an inherited rule or UA
    stylesheet constrains width; z-index above every app layer (.lyrics is z:7, modals lower). */
-.lshower{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;inset:0!important;margin:0!important;padding:0!important;width:100vw!important;max-width:none!important;height:100vh!important;min-height:100vh!important;max-height:none!important;z-index:2147483000!important;display:flex!important;flex-direction:column;isolation:isolate;overflow:hidden;color:#fff;background:var(--pool2,#2a0308);border:0;border-radius:0}
+.lshower{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;inset:0!important;margin:0!important;padding:0!important;width:100vw!important;max-width:none!important;height:100vh!important;min-height:100vh!important;max-height:none!important;z-index:2147483000!important;display:flex!important;flex-direction:column;isolation:isolate;overflow:hidden;color:#fff;background:transparent;border:0;border-radius:0}
 @supports(height:100dvh){.lshower{height:100dvh!important}}
 .lshower,.lshower *{box-sizing:border-box}
 .lshower[hidden]{display:none!important}
@@ -110,15 +110,26 @@ html:not(.lite) .lshower{animation:lshIn .42s var(--ease,cubic-bezier(.2,.8,.2,1
 html:not(.lite) .lshower.lsh-out{animation:lshOut .3s ease forwards}
 @keyframes lshIn{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:none}}
 @keyframes lshOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.985)}}
-.lshower-bg{position:absolute;inset:0;z-index:-1;overflow:hidden;background:var(--pool2,#2a0308)}
 /* two stacked copies of the cover so a track change CROSSFADES instead of popping */
-.lshower-bg img{position:absolute;inset:-12%;width:124%;height:124%;object-fit:cover;filter:blur(80px) saturate(1.4) brightness(.6);transform:scale(1.1);opacity:0;transition:opacity .7s ease}
+/* FIX 2: .lshower-bg used to be z-index:-1, which painted it BEHIND the overlay's own opaque
+   background (var(--pool2)) → only a plain dark gradient was visible. Now: bg (z0) < grid (z1)
+   < foot/close (z2/3), and the frost sits above the covers at ~60% opacity. */
+.lshower-bg{position:absolute;inset:0;z-index:0!important;overflow:hidden;background:radial-gradient(120% 100% at 50% 30%,color-mix(in srgb,var(--pool2,#2a0308) 92%,black),#070102)}
+.lshower-bg img{position:absolute;inset:-12%;z-index:0;width:124%;height:124%;object-fit:cover;filter:blur(80px) saturate(1.4);transform:scale(1.3);opacity:0;transition:opacity .7s ease}
 .lshower-bg img.lsh-vis{opacity:1}
+/* the drift keyframes must match the requested scale (1.3), otherwise the animation overrode
+   transform:scale(1.3) and shrank/blurred the cover differently than specified */
 html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infinite alternate}
-@keyframes lshDrift{from{transform:scale(1.1) translate(-1.5%,1%)}to{transform:scale(1.22) translate(1.5%,-1%)}}
-.lshower-frost{position:absolute;inset:0;background:linear-gradient(160deg,color-mix(in srgb,var(--blood-dk,#6b0912) 62%,rgba(6,2,4,.86)) 0%,rgba(6,2,4,.72) 45%,color-mix(in srgb,var(--pool2,#2a0308) 88%,black) 100%),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 26%,transparent),transparent 60%)}
-.lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px}
-.lshower-close:hover{background:rgba(255,255,255,.2)!important;transform:scale(1.06)}
+@keyframes lshDrift{from{transform:scale(1.3) translate(-1.5%,1%)}to{transform:scale(1.42) translate(1.5%,-1%)}}
+/* FIX 2: dark RED gradient at ~60% opacity (was an almost-opaque black wash → the background
+   read as a plain dark gradient). The blurred cover colours now show straight through it. */
+.lshower-frost{position:absolute;inset:0;z-index:1;background:linear-gradient(160deg,color-mix(in srgb,var(--blood-dk,#6b0912) 85%,transparent) 0%,color-mix(in srgb,var(--blood,#c4182a) 55%,transparent) 45%,color-mix(in srgb,var(--pool2,#2a0308) 90%,transparent) 100%),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 26%,transparent),transparent 60%)}
+.lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px;opacity:.7;transition:background .2s,transform .2s,opacity .2s}
+/* FIX 3: kill the app-wide `button:focus-visible{outline:3px solid var(--focus)}` ring — the
+   overlay focuses this button on open, which put a bright red halo around the X. Hover state
+   (subtle brighten + scale) is kept instead. */
+.lshower-close,.lshower-close:focus,.lshower-close:focus-visible,.lshower-close:active{outline:none!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent}
+.lshower-close:hover,.lshower-close:focus-visible{background:rgba(255,255,255,.2)!important;opacity:1;transform:scale(1.06)}
 /* REMOVED (old centred modal head): .lshower-head / .lshower-kicker / .lshower-head h2 / .lshower-head p — replaced by the two-column layout below */
 /* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
 /* ---- FIX 2: two columns filling the FULL screen (grid overlays the whole viewport,
@@ -126,8 +137,16 @@ html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infin
 .lshower-grid{position:absolute;inset:0;z-index:1;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:clamp(18px,4vw,56px);align-items:stretch;justify-items:stretch;padding:clamp(18px,4vh,48px) clamp(20px,4vw,64px) clamp(44px,7vh,64px);background:none;border:0;box-shadow:none}
 /* no card/box around the left column — kill any .glass-style background, border or radius it could inherit */
 .lshower-main{background:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-.lshower-main{grid-column:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;height:100%;text-align:center;text-shadow:0 2px 22px rgba(0,0,0,.55)}
-.lsh-art{width:min(38vw,44vh,440px);aspect-ratio:1;border-radius:18px;overflow:hidden;background:repeating-radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blood-dk) 80%,black) 0 3px,color-mix(in srgb,var(--pool2) 80%,black) 3px 5px),var(--pool2);box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--blood) 45%,transparent),0 0 0 1px rgba(255,255,255,.08)}
+.lshower-main{grid-column:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;width:100%;height:100%;text-align:center;text-shadow:0 2px 22px rgba(0,0,0,.55)}
+/* FIX 1: force border-box on the overlay's own boxes (the app-wide universal selectors can win
+   over `.lshower *`, and content-box + width:min(38vw,..) + aspect-ratio made the square cover
+   collapse to a tiny/zero-height box → the left column looked empty). The cover also gets an
+   explicit height fallback for engines without aspect-ratio support. */
+.lshower-grid,.lshower-main,.lshower-body,.lshower-foot,.lsh-art,.lsh-seek,.lsh-ctrls{box-sizing:border-box!important}
+/* FIX 1: belt-and-braces visibility — the left column must never be hidden by a stray rule. */
+.lshower-grid,.lshower-main,.lshower-body,.lsh-art,.lsh-name,.lsh-sub,.lsh-seek,.lsh-ctrls{visibility:visible!important;opacity:1!important}
+.lsh-art{width:min(38vw,44vh,440px);max-width:100%;aspect-ratio:1/1;height:min(38vw,44vh,440px);border-radius:18px;overflow:hidden;background:repeating-radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blood-dk) 80%,black) 0 3px,color-mix(in srgb,var(--pool2) 80%,black) 3px 5px),var(--pool2);box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--blood) 45%,transparent),0 0 0 1px rgba(255,255,255,.08)}
+@supports(aspect-ratio:1/1){.lsh-art{height:auto}}
 .lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
 html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ease,cubic-bezier(.2,.8,.2,1)) both}
 @keyframes lshArtIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
@@ -139,6 +158,10 @@ html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ea
 .lsh-seek input.range{flex:1;margin:0}
 .lsh-ctrls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:6px}
 .lsh-ctrls .iconbtn{width:44px;height:44px;border-color:rgba(255,255,255,.18)!important;background:rgba(255,255,255,.08)!important;color:#fff!important;box-shadow:none!important;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+/* FIX 1b: the transport buttons were invisible — fx.js's ripple helper injects <span class="rip">
+   into every <button> and leaves it there; combined with button{overflow:hidden} a stale ripple
+   could cover the Font Awesome glyph. Keep our own icons on top of any leftover ripple. */
+.lsh-ctrls .iconbtn>*{position:relative;z-index:1}
 .lsh-ctrls .iconbtn svg{width:20px;height:20px;fill:currentColor}
 .lsh-ctrls .iconbtn.primary{width:56px;height:56px;background:color-mix(in srgb,var(--blood) 72%,black)!important;border-color:color-mix(in srgb,var(--blood-hi) 55%,transparent)!important;box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 80%,black)!important}
 .lsh-ctrls .iconbtn:hover{background:rgba(255,255,255,.16)!important}
