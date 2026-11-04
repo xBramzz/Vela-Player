@@ -227,7 +227,7 @@ function shRawLow(){
    much the CURRENT level sits ABOVE that baseline. A sustained 808 raises the baseline with it (no
    permanent glow); a kick transient spikes against it. Smoothing: attack ≈50 ms, release ≈350 ms
    (one-pole time constants evaluated per frame). */
-let shAvg=0,shOut=0,shLast=0,shDbg=0,shDbgEl=null;
+let shAvg=0,shOut=0,shLast=0;
 function shBassStep(t){
  if(!shRun)return;shRaf=requestAnimationFrame(shBassStep);
  let dt=(t-shLast)/1000;shLast=t;if(!(dt>0)||dt>.25)dt=1/60;
@@ -242,14 +242,18 @@ function shBassStep(t){
   const k=Math.min(1,Math.max(0,dyn*.92+x*.08));
   shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
  if(mesh)mesh.style.setProperty("--bg-bass",shOut.toFixed(3)); /* ONE variable, on the pulse wrapper */
- if(t-shDbg>120){shDbg=t;if(shDbgEl)shDbgEl.textContent="bass "+shOut.toFixed(2)+" · avg "+shAvg.toFixed(2)+(shAnalyser?"":" · no analyser")}}
+ amaGlowStep(t)} /* bass-reactive background glow (AudioMotion LOW band, shOut fallback) */
 function shBassStart(){if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
 function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass");amaStop()}
-/* ================= AUDIOMOTION SPECTRUM (optional, extras-only) =================
-   npm i audiomotion-analyzer → vendored UMD build loaded before this file.
-   Attaches to the app's FINAL master output via DetuneApp.audioGraph — never calls
-   createMediaElementSource (app.js owns #audio; double-binding throws + re-routes sound). */
-let ama=null,amaCanvas=null,amaTimer=0;
+/* ================= AUDIOMOTION BASS GLOW (optional, extras-only) =================
+   audiomotion-analyzer renders NO numbers itself — the readout at the bottom was our own
+   debug div ("bass 0.42 · avg 0.11"), now removed (see shBassStep / the old lsh-bassdbg IIFE).
+   The analyzer runs in MODE 2 (circular) purely as a low-frequency energy SOURCE: its getEnergy
+   presets return smoothed LOW/MID/HIGH values computed from the same master tap we already probe.
+   Those drive .lsh-bassglow behind the mesh — the visible background pulses with the bass.
+   Attaches via DetuneApp.audioGraph; never calls createMediaElementSource (app.js owns #audio;
+   double-binding throws + re-routes sound) and never connectOutput() (speakers untouched). */
+let ama=null,amaCanvas=null,amaTimer=0,amaGlow=null,amaLast={t:0,lo:0,mid:0,hi:0};
 function amaOk(){return typeof window.AudioMotionAnalyzer==="function"}
 function amaBuild(){if(!SHBG||!amaOk())return;const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return;
  try{
@@ -257,24 +261,41 @@ function amaBuild(){if(!SHBG||!amaOk())return;const G=window.DetuneApp&&DetuneAp
   else if(ama&&ama.audioCtx!==G.ctx){amaKill()} /* AudioContext replaced (teardown/retry) → rebuild */
   if(!ama){
    amaCanvas=document.createElement("canvas");amaCanvas.className="lsh-ama";amaCanvas.setAttribute("aria-hidden","true");
-   SHBG.append(amaCanvas);
+   SHBG.append(amaCanvas); /* sits BELOW .lsh-bassglow (DOM order), invisible — data source only */
    ama=new AudioMotionAnalyzer(G.ctx,{canvas:amaCanvas,sourceNode:G.master,
-    mode:0, /* 0 = Spectrum bars */
-    isVari:false,nbBars:36,barWidth:.75,barSpaceRatio:1.25,
-    smoothing:.8,multiplier:2.4,minFreq:20,maxFreq:16000,
-    colorStops:{0:"hsl(340,90%,55%)",.5:"hsl(20,90%,55%)",1:"hsl(200,90%,60%)"},
-    gradientColor:"#2a2a30",glow:.4,glowColor:"#fff",ledDef:"rounded",
-    reflex:true,overlay:true,frontLayers:false,autoScale:false});
-   /* sourceNode was connected with keepConnected=false by default — master keeps feeding
-      ctx.destination untouched; the analyzer only PROBEs it. Never call connectOutput(). */
-  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas)}
+    mode:2, /* circular: used only for its LOW/MID/HIGH energy model — nothing here draws bars/LEDs */
+    isMedi:false,isBassBlob:false,showLaneLines:false,showBgBars:0,showCap:false,isMirrored:false,
+    dimmer:0,overlay:false,frontLayers:false,
+    minFreq:20,maxFreq:16000,smoothing:.8,multAgility:.7});
+   /* sourceNode connects with keepConnected=false by default — master keeps feeding
+      ctx.destination untouched; the analyzer only PROBEs it. */
+   amaGlow=document.createElement("div");amaGlow.className="lsh-bassglow";amaGlow.setAttribute("aria-hidden","true");
+   /* Tint the glow with the SAME cover colours the mesh uses (first 3 blobs' --c triples). */
+   if(mesh){const bl=mesh.querySelectorAll(".lsh-blob");for(let i=0;i<3&&bl[i];i++){const c=bl[i].style.getPropertyValue("--c").trim();if(c)amaGlow.style.setProperty("--bgc"+(i+1),c)}}
+   SHBG.append(amaGlow); /* after canvas + mesh children → paints on top of them, under .lshower-grid */
+  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas);if(amaGlow)SHBG.append(amaGlow)}
   if(!ama.isOn)ama.toggleAnalyzer(true);
   clearInterval(amaTimer);amaTimer=setInterval(()=>{try{if(ama&&ama.isOn&&G.master)G.master.connect(ama)}catch{}},250); /* rAF-throttle keep-alive: re-assert the probe tap (idempotent, adds no audible path) */
  }catch(e){amaStop()}}
 function amaStop(){clearInterval(amaTimer);amaTimer=0;if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
-function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null;if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}}
-/* tiny debug readout, bottom-left corner (never above the close button's z-tier) */
-(function(){if(!SH)return;shDbgEl=document.createElement("div");shDbgEl.className="lsh-bassdbg";shDbgEl.setAttribute("aria-hidden","true");shDbgEl.textContent="bass 0.00";SH.append(shDbgEl)})();
+function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null;
+ if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}
+ if(amaGlow){try{amaGlow.remove()}catch{}amaGlow=null}}
+/* Feed AudioMotion's smoothed LOW band into the CSS vars (--bgLo/--bgMid/--bgHi). Called once per
+   frame from shBassStep. Falls back to our own kick follower (shOut) when the analyzer isn't up
+   (script missing / graph not built yet), so the glow ALWAYS tracks the bass somehow. */
+function amaGlowStep(t){
+ if(!amaGlow)return;
+ let lo=-1,mid=0,hi=0;
+ try{if(ama&&ama.isOn){lo=ama.getEnergy("bass");mid=ama.getEnergy("lowMid");hi=ama.getEnergy("mid")}}catch{lo=-1} /* presets: bass 20–250 Hz, lowMid 250–500, mid 500–2k */
+ if(!(lo>=0)){lo=Math.min(1,shOut*1.15)} /* fallback: shared kick follower from shRawLow()/shBassStep */
+ const dt=t-amaLast.t;if(!(dt>0)||dt>.25)amaLast.t=t;
+ const rise=1-Math.exp(-dt/.05),fall=1-Math.exp(-dt/.3); /* fast attack / smooth release */
+ amaLast.lo+=(Math.min(1,lo)-amaLast.lo)*(lo>amaLast.lo?rise:fall);
+ amaLast.mid+=(Math.min(1,mid)-amaLast.mid)*(mid>amaLast.mid?rise:fall);
+ amaLast.hi+=(Math.min(1,hi)-amaLast.hi)*(hi>amaLast.hi?rise:fall);
+ const s=amaGlow.style;s.setProperty("--bgLo",amaLast.lo.toFixed(3));
+ s.setProperty("--bgMid",amaLast.mid.toFixed(3));s.setProperty("--bgHi",amaLast.hi.toFixed(3))}
 /* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
 function shLiveLow(){const x=shRawLow();if(x>=0)return x;const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
  const n=an.frequencyBinCount,buf=shLiveLow.b&&(shLiveLow.b.length===n)?shLiveLow.b:(shLiveLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
@@ -333,10 +354,13 @@ function meshPreload(src){if(!src||src===meshTried||/^(data|blob):/.test(src))re
  const probe=new Image();probe.decoding="async";
  probe.onload=()=>{if(meshPending!==src)return;meshPending=null;if(!SH.hidden&&meshColors(probe))meshSet(true)};
  probe.onerror=()=>{if(meshPending===src)meshPending=null};probe.src=src}
+/* Re-tint the bass glow after a mesh rebuild (track change) so it always matches the artwork. */
+function amaGlowTint(){if(!amaGlow||!mesh)return;const bl=mesh.querySelectorAll(".lsh-blob");for(let i=0;i<3;i++){const c=bl[i]&&bl[i].style.getPropertyValue("--c").trim();amaGlow.style.setProperty("--bgc"+(i+1),c||"var(--bgcN)")}}
 function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;const wrap=n.parentNode; /* .bg-pulse */
  if(reduceMotion||lite){if(o)o.remove()}else{wrap.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
  SHBG.prepend(wrap);
  mesh=n; /* --bg-bass AND --lshBass are published on the .lsh-mesh node (inherits to .bg-pulse/.lsh-spin) */
+ amaGlowTint(); /* glow follows the new cover colours too */
  if(reduceMotion||lite){meshStop();shBassStart();return} /* static blobs — but the pulse still runs */
  meshStart()}
 function meshLow(){/* 20–120 Hz from the OVERLAY'S OWN analyser (shWire/shRawLow above) — no longer
