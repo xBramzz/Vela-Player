@@ -115,27 +115,57 @@ load=function(){origLoad();shSync();
   if(!autoFetched.has(k)){autoFetched.add(k);setTimeout(()=>{if(!raw&&key()===k)fetchLrc(false)},400)}
  }};
 /* ---------- full-screen lyric shower (Apple Music style) ---------- */
-const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt");let shIdx=-1,shHold=0,shPrev=null;
+const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("lshCover");let shIdx=-1,shHold=0,shPrev=null,shBgTop=true,shSeeking=false;
+const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
+function shDepth(){if(lite||!synced)return;const ch=SHB.children;for(let k=0;k<ch.length;k++){const c=ch[k];c.classList.remove("pn1","pn2","pn3","pnf");if(k===shIdx||c.classList.contains("on"))continue;const d=Math.abs(k-shIdx);c.classList.add(d<=1?"pn1":d===2?"pn2":d===3?"pn3":"pnf")}}
 function shRender(){SHB.replaceChildren();shIdx=-1;
  if(!lines.length){const e=document.createElement("div");e.className="lshower-empty";const i0=document.createElement("i");i0.className="fa-solid fa-microphone-lines";const p0=document.createElement("p");p0.textContent="No lyrics for this track yet.";const s0=document.createElement("span");s0.textContent="Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";e.append(i0,p0,s0);SHB.append(e);return}
  const f=document.createDocumentFragment();
  lines.forEach((l,i)=>{const p=document.createElement("p");p.className="lyr"+(synced?" syn":"")+(l.s?"":" gap");p.textContent=l.s||"";if(synced)p.dataset.i=i;f.append(p)});
  SHB.append(f);shTick(true)}
+function shScrollTo(el){if(!el)return;SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/3),behavior:(lite||document.documentElement.dataset.shInit==="0")?"auto":"smooth"})}
 function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.currentTime+.25;let i=-1;for(let k=0;k<lines.length;k++){if(lines[k].t<=t)i=k;else break}
- if(i===shIdx&&!force)return;SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(!el)return;el.classList.add("on");
- if(Date.now()>shHold)SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/2+el.clientHeight/2),behavior:(lite||force)?"auto":"smooth"})}
+ if(i===shIdx&&!force)return;SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(!el)return;el.classList.add("on");shDepth();
+ if(Date.now()>shHold)shScrollTo(el)}
+function shArt(v){const img=$( "cover").querySelector("img");if(img&&img.src){(v?SHA:SHB2).src=img.src;(v?SHA:SHB2).classList.add("lsh-vis");(v?SHB2:SHA).classList.remove("lsh-vis");shBgTop=v}else{SHA.classList.remove("lsh-vis");SHB2.classList.remove("lsh-vis")}
+ if(SHC){if(img&&img.src){SHC.src=img.src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}}
+function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
- if(v){origLoad();const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}else SHA.style.display="none";
+ if(v){SH.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
   $("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;
   /* pause ALL background painting while fullscreen — the shower covers everything, so the
      waveform canvas + embers are pure wasted GPU work behind it (this was the flicker/lag) */
   if(window.DetuneFX)DetuneFX.freeze=true;document.body.classList.add("lyrshow-open");
-  shPrev=document.activeElement;SH.hidden=false;document.body.style.overflow="hidden";shRender();setTimeout(()=>{shTick(true);SHB.scrollTop=Math.max(0,(SHB.children[Math.max(shIdx,0)]?.offsetTop||0)-SHB.clientHeight/2);$("lshClose").focus()},60)}
- else{SH.hidden=true;document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
+  shPrev=document.activeElement;SH.hidden=false;document.body.style.overflow="hidden";shRender();shUI();
+  /* request real browser fullscreen from inside the click/keydown user-gesture, BEFORE any
+     async work — a later call would be blocked by the browser. If it's denied we silently
+     keep the fixed-position overlay (it already covers the whole viewport). */
+  try{const p=(document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen());if(p&&p.catch)p.catch(()=>{})}catch{}
+  document.documentElement.dataset.shInit="0";
+  setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose").focus()},60)}
+ else{if(SH.hidden)return;shFsOff();
+  if(!lite){SH.classList.add("lsh-out");setTimeout(()=>{SH.classList.remove("lsh-out");SH.hidden=true},300)}else SH.hidden=true;
+  document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}
-function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;const img=$("cover").querySelector("img");if(img){SHA.src=img.src;SHA.style.display=""}shRender()}}
+function shUI(){if(SH.hidden)return;
+ $("lshCur").textContent=fmtT(a.currentTime);$("lshDur").textContent=fmtT(a.duration);
+ if(!shSeeking)$("lshSeek").value=String(Math.round((a.duration?Math.min(1,a.currentTime/a.duration):0)*1000));
+ const playing=!a.paused&&!a.ended;
+ $("lshPlayIcon").innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
+ $("lshPlay").setAttribute("aria-label",playing?"Pause":"Play")}
+function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}}
 $("lshClose").onclick=()=>shOpen(false);
+$("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
+$("lshPrev").onclick=()=>{$("prev")?.click()};
+$("lshNext").onclick=()=>{$("next")?.click()};
+{const SK=$("lshSeek");SK.addEventListener("input",()=>{shSeeking=true;if(Number.isFinite(a.duration))a.currentTime=a.duration*(+SK.value/1000)});
+ SK.addEventListener("change",()=>{shSeeking=false});SK.addEventListener("pointerup",()=>{shSeeking=false})}
+for(const ev of["timeupdate","durationchange"])a.addEventListener(ev,shUI);
+a.addEventListener("play",shUI);a.addEventListener("pause",shUI);a.addEventListener("ended",shUI);
+new MutationObserver(shSync).observe($("title"),{childList:true,characterData:true,subtree:true});
+new MutationObserver(shSync).observe($("artist"),{childList:true,characterData:true,subtree:true});
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&!SH.hidden){/* browser left FS (e.g. F11/Esc at OS level): keep the fixed overlay, no re-request */}});
 SH.addEventListener("click",e=>{if(e.target===SH||e.target.classList.contains("lshower-frost")||e.target.classList.contains("lshower-bg"))shOpen(false)});
 SHB.addEventListener("click",e=>{const p=e.target.closest(".syn");if(!p)return;a.currentTime=Math.max(0,lines[+p.dataset.i].t-.3);shHold=0;shTick(true)});
 for(const ev of["wheel","touchmove"])SHB.addEventListener(ev,()=>shHold=Date.now()+4000,{passive:true});
@@ -144,7 +174,7 @@ SHB.addEventListener("keydown",e=>{if(!synced)return;let n=null;
  else if(e.key==="ArrowUp")n=Math.max(0,shIdx-1);
  else if(e.key==="Home")n=0;else if(e.key==="End")n=lines.length-1;
  else if(e.key==="Enter"&&e.target.classList.contains("syn")){e.target.click();return}
- if(n!=null){e.preventDefault();const el=SHB.children[n];if(el){a.currentTime=Math.max(0,lines[n].t-.3);shHold=0;shTick(true)}}});
+ if(n!=null){e.preventDefault();const el=SHB.children[n];if(el){a.currentTime=Math.max(0,lines[n].t-.3);shHold=Date.now()+4000;shTick(true);if(el)shScrollTo(el)}}});
 a.addEventListener("timeupdate",()=>shTick());a.addEventListener("seeked",()=>shTick(true));
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH.hidden){shOpen(false);e.stopPropagation();return}if(e.key==="Escape"&&!P.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l"){if(!SH.hidden){shOpen(false);return}shOpen(SH.hidden)}});
 $("shortcuts").querySelector("ul").insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
