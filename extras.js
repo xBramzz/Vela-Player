@@ -116,6 +116,9 @@ load=function(){origLoad();shSync();
  }};
 /* ---------- full-screen lyric shower (Apple Music style) ---------- */
 const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("lshCover");let shIdx=-1,shHold=0,shPrev=null,shBgTop=true,shSeeking=false;
+/* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
+   any transformed/padded container (e.g. an older cached index.html), lift it out now. */
+try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
 const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
 function shDepth(){if(lite||!synced)return;const ch=SHB.children;for(let k=0;k<ch.length;k++){const c=ch[k];c.classList.remove("pn1","pn2","pn3","pnf");if(k===shIdx||c.classList.contains("on"))continue;const d=Math.abs(k-shIdx);c.classList.add(d<=1?"pn1":d===2?"pn2":d===3?"pn3":"pnf")}}
 function shRender(){SHB.replaceChildren();shIdx=-1;
