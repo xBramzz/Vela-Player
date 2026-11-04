@@ -214,9 +214,12 @@ function shWire(){
      Re-acquired after ~1.5 s so a track change that restarts deck B's stream doesn't leave a dead tap. */
    shWired=true;shWiredAt=performance.now();
    try{for(const n of shSrcList){try{n.disconnect()}catch{}}shSrcList=[shAnalyser]}catch{}
-   const el=[$("audio"),$("audioB")];
+   const el=[$("audio")];   /* deck B is NOT tapped here: its captureStream() is empty while idle
+      (throws in createMediaStreamSource) and app.js bindDeckB() already publishes the live tap as
+      G.bAnalyser below — wired during every crossfade. */
    for(const e0 of el){if(!e0||typeof e0.captureStream!=="function")continue;
-    try{const src=shCtx.createMediaStreamSource(e0.captureStream());src.connect(shAnalyser);shSrcList.push(src)}catch{}}
+    try{const ms=e0.captureStream();if(!ms.getAudioTracks().length)continue; /* idle element → empty stream, skip */
+     const src=shCtx.createMediaStreamSource(ms);src.connect(shAnalyser);shSrcList.push(src)}catch{}}
    try{const b=G.bAnalyser;if(b&&b!==shAnalyser)b.connect(shAnalyser)}catch{}}
   return !!shAnalyser}catch(e){return false}}
 /* suspended context (autoplay policy) → resume on ANY user interaction; playback itself also resumes it */

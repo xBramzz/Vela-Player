@@ -322,15 +322,26 @@ const bpmBusy = new Set();
    media pipeline (audible, volume-ramped for the fade) and feeds the VISUALIZER via
    a MediaStreamDestination → MediaStreamSource tap that never touches ctx.destination. */
 let bAnalyser = null;           /* analyser fed by deck B's stream tap */
+let bTapSrc = null;             /* the MediaStreamSource feeding bAnalyser (rebuilt per fade) */
 function bindDeckB() {
+  /* Deck B sits idle (no src, paused) for most of a session. Calling captureStream() on it
+     then returns an EMPTY MediaStream — zero audio tracks — and createMediaStreamSource
+     throws DOMException ("The stream is empty"). That was the permanent console noise AND
+     why DetuneFX.analyserB / G.bAnalyser stayed null: extras.js expects a live feed from
+     those handles during crossfades. So: bail quietly when there is no track to tap, and
+     re-run this from startCrossfade() once deck B actually has a source + play requested —
+     that is when captureStream() returns a live audio track. */
   try {
     if (!ctx || typeof audioB.captureStream !== "function") return;
     const ms = audioB.captureStream();
-    const tap = ctx.createMediaStreamSource(ms);
-    bAnalyser = ctx.createAnalyser(); bAnalyser.fftSize = 2048;
-    tap.connect(bAnalyser);       /* analyser is a sink — nothing here reaches destination */
+    if (!ms.getAudioTracks().length) return;   /* deck B idle → nothing to tap yet */
+    if (bTapSrc) { try { bTapSrc.disconnect(); } catch { /* ignore */ } }
+    bTapSrc = ctx.createMediaStreamSource(ms);
+    if (!bAnalyser) { bAnalyser = ctx.createAnalyser(); bAnalyser.fftSize = 2048; bTapSrc.connect(bAnalyser); }
+    else bTapSrc.connect(bAnalyser);           /* analyser is a sink — nothing here reaches destination */
     window.DetuneFX && (DetuneFX.analyserB = bAnalyser);
-  } catch (e) { console.warn("Deck B visualiser tap unavailable", e); bAnalyser = null; }
+    window.DetuneApp && DetuneApp.audioGraph && (DetuneApp.audioGraph.bAnalyser = bAnalyser); /* extras.js shower probe reads G.bAnalyser */
+  } catch (e) { console.warn("Deck B visualiser tap unavailable", e); bAnalyser = null; bTapSrc = null; }
 }
 function xfadeUI() {
   const s = $("xfade"), v = $("xfadeVal");
@@ -455,6 +466,7 @@ async function startCrossfade(nt) {
   });
   if (ctx.state === "suspended") await ctx.resume();
   await audioB.play().catch(() => {});      /* autoplay policy already satisfied by deck A playing */
+  bindDeckB();                              /* deck B now has a live src + stream → tap it for the visualiser */
   xfade.t0 = performance.now(); xfade.active = true;
   window.__detuneXfade = true;    /* fx.js follows the incoming deck now */
   runXfade();
@@ -543,6 +555,7 @@ async function playTrack(id, autoplay = true) {
     console.error("Audio engine setup failed", e);
     try { source?.disconnect(); } catch { /* ignore */ }
     analyser = null;
+    bAnalyser = null; bTapSrc = null;      /* these belonged to the closed ctx — extras.js/DetuneFX handles would be dead nodes */
     window.DetuneApp && (DetuneApp.audioGraph = null); /* stale graph handle → extras.js rebuilds its probe */
     if (ctx && ctx.state !== "closed") { try { await ctx.close(); } catch { /* ignore */ } }
     ctx = null; filters = []; master = null; compressor = null; pitchNode = null;
