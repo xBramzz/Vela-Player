@@ -139,7 +139,7 @@ body.lsh-out .lshower{opacity:0}
    dark/dull): brightness .7 / saturate 1.35 / opacity .75 — a red-orange-brown cover now reads warm,
    not black-gray. Bass drives ONLY --bg-bass here: a tiny brightness/scale lift (the cover "breathes"
    very slightly but never drifts or flashes — extras.js caps the values). */
-.lshower-bg img{--bg-bass:0;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(calc(.7 + var(--bg-bass)*.16)) saturate(calc(1.35 + var(--bg-bass)*.25));transform:scale(calc(1.6 + var(--bg-bass)*.045)) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity,filter,transform}
+.lshower-bg img{--bg-bass:0;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(calc(.7 + var(--bg-bass)*.45)) saturate(calc(1.35 + var(--bg-bass)*.9));transform:scale(calc(1.6 + var(--bg-bass)*.12)) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity,filter,transform}
 .lshower-bg img.lsh-vis{opacity:.75}
 .lshower-bg img.lsh-gone{opacity:0}
 /* ---- MOVING MESH: 4–5 REAL sampled cover colours (.lsh-blob) inside a slow-rotating carousel
