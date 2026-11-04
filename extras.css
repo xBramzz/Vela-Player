@@ -128,11 +128,17 @@ body.lsh-out .lshower{opacity:0}
    .lshower-grid (z-index 1). The frost scrim moved INSIDE the bg wrapper so no decorative layer
    can ever stack above the content. Nothing in the bg wrapper exceeds z-index 0 internally, and
    no single element uses a giant blur: each mesh blob is max 60vmax with its own 80px blur. */
-.lshower-bg{position:absolute;inset:0;z-index:0!important;pointer-events:none;overflow:hidden;background:#0a0a0b;contain:paint}
+/* FIX 4 (background too dark/dull): the near-black base made every layer read as black-gray.
+   Base is now a mid-dark neutral tinted by the live cover theme (--blood-dk), and all vibrancy
+   comes from the cover + mesh layers rendered at high opacity/saturation (see below). */
+.lshower-bg{position:absolute;inset:0;z-index:0!important;pointer-events:none;overflow:hidden;background:color-mix(in srgb,var(--blood-dk,#3a1208) 55%,#171009);contain:paint}
 /* BASE LAYER: the cover itself, enlarged + heavily blurred ("Apple little blur" look). Two stacked
-   copies crossfade (~1s) on track change via .lsh-vis / .lsh-gone (extras.js). */
-.lshower-bg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(.6) saturate(1.05);transform:scale(1.6) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity}
-.lshower-bg img.lsh-vis{opacity:.6}
+   copies crossfade (~1s) on track change via .lsh-vis / .lsh-gone (extras.js).
+   FIX 4: brightness .6→.7, saturate 1.05→1.35 and visible opacity .6→.7 so the cover's red/orange/
+   beige tones actually show through — both halves of the screen get colour (the img spans the whole
+   viewport, scale(1.7) keeps it edge-to-edge even inside the rotating mesh wrapper's bleed area). */
+.lshower-bg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;filter:blur(60px) brightness(.7) saturate(1.35);transform:scale(1.7) translateZ(0);transition:opacity 1s ease;pointer-events:none;will-change:opacity}
+.lshower-bg img.lsh-vis{opacity:.7}
 .lshower-bg img.lsh-gone{opacity:0}
 /* ---- MOVING MESH: 4–5 REAL sampled cover colours (.lsh-blob) inside a slow-rotating carousel
    (.lsh-spin, 0→360° over 60s). Each blob also drifts on its own lissajous path — extras.js's rAF
@@ -143,19 +149,35 @@ body.lsh-out .lshower{opacity:0}
 .lsh-mesh{position:absolute;inset:0;z-index:0;pointer-events:none;contain:paint}
 .lsh-spin{position:absolute;inset:-25%;will-change:transform;transform:rotate(var(--lshSpin,0deg)) translateZ(0)}
 @keyframes lshSpin{to{transform:rotate(360deg)}} /* fallback only — used when reduced-motion/lite */
-.lsh-blob{position:absolute;left:var(--x);top:var(--y);width:var(--sz);height:var(--sz);border-radius:50%;background:radial-gradient(circle at 50% 50%,rgb(var(--c)/.9) 0%,rgb(var(--c)/.5) 45%,transparent 72%);filter:blur(80px) saturate(1.2);mix-blend-mode:screen;opacity:.7;will-change:transform;transform:translate3d(var(--tx,-50%),var(--ty,-50%),0) scale(var(--sx,1)) translateZ(0)}
+/* FIX 3 (hard-edged orange circle): every blob is now a PURE radial-gradient fill that reaches
+   transparent at 70% of its own radius, blurred by 90px, sized 50–70vmax — no border, no box-shadow,
+   no outline anywhere. A blob can never read as a distinct circle any more.
+   FIX 4: colour stops use rgb(var(--c)/.85…1) (the sampled dominant colours at 0.85–1.0 alpha),
+   saturate(1.3) + brightness(1.06) instead of dark tints, mix-blend-mode "lighten" (screen washed the
+   reds/oranges out over the dark base) and opacity .95. The bass pulse (--lshBass / --sx/--sy/opacity
+   written by extras.js's rAF) and the slow spin/drift are untouched. */
+.lsh-blob{position:absolute;left:var(--x);top:var(--y);width:var(--sz);height:var(--sz);border-radius:50%;background:radial-gradient(circle,rgb(var(--c)/1) 0%,rgb(var(--c)/.85) 38%,transparent 70%);filter:blur(90px) saturate(1.3) brightness(1.06);mix-blend-mode:lighten;border:0!important;outline:none!important;box-shadow:none!important;opacity:.95;will-change:transform;transform:translate3d(var(--tx,-50%),var(--ty,-50%),0) scale(calc(var(--sx,1)*(1 + var(--lshBass,0)*.1))) translateZ(0)}
 /* track change = new colour set fades in over ~1s while the old one fades out (both alive briefly) */
 .lsh-mesh-in{animation:lshMeshIn 1s ease forwards}
 .lsh-mesh-out{animation:lshMeshOut 1s ease forwards}
 @keyframes lshMeshIn{from{opacity:0}to{opacity:1}}
 @keyframes lshMeshOut{from{opacity:1}to{opacity:0}}
 /* soft vignette + contrast scrim — still a BACKGROUND layer (inside .lshower-bg, z-index 0) */
-.lshower-frost{position:absolute;inset:0;z-index:0;background:radial-gradient(130% 100% at 50% 42%,transparent 40%,rgba(0,0,0,.34) 100%),linear-gradient(180deg,rgba(0,0,0,.3) 0%,rgba(0,0,0,.1) 45%,rgba(0,0,0,.42) 100%)}
-.lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:1;width:40px;height:40px;border-radius:999px;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:0!important;box-shadow:none!important;color:#fff!important;font-size:16px;opacity:.75;display:grid;place-items:center;transition:background .15s ease,transform .15s ease,opacity .15s ease}
-/* APPLE HIG STYLE: translucent-white pill, no border, no red halo (kills the app-wide
-   `button:focus-visible{outline:3px solid var(--focus)}` ring that put a red glow on the X). */
+/* FIX 4: the heavy dark vignette/gradients are gone — only a LIGHT uniform dark overlay
+   (rgba(0,0,0,.25)) so the cover colours and blobs show through on BOTH halves of the screen. */
+.lshower-frost{position:absolute;inset:0;z-index:0;background:rgba(0,0,0,.25)}
+/* ---- FIX 1 (close button): it used to be position:absolute inside .lshower AND was then moved to
+   become a direct child of <body> by extras.js — where `body{overflow:hidden}` + the app-shell
+   padding clipped it into the top-LEFT corner. It is now an anchor-independent FIXED circle in the
+   TOP-RIGHT: exactly 40x40, top/right 24px (safe-area aware), no left/inset/transform/margin offset,
+   rgba(255,255,255,.12) glass with blur(20px), white "×" glyph, hover rgba(255,255,255,.22), and a
+   z-index above every layer of the overlay (.lshower itself sits at 2147483000). */
+.lshower-close{all:unset;box-sizing:border-box;position:fixed!important;top:max(24px,calc(env(safe-area-inset-top) + 24px))!important;left:auto!important;right:max(24px,calc(env(safe-area-inset-right) + 24px))!important;bottom:auto!important;inset-block-start:auto;margin:0!important;translate:none!important;z-index:2147483600!important;display:grid!important;place-items:center;width:40px;height:40px;border:0!important;border-radius:999px!important;background:rgba(255,255,255,.12)!important;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:none!important;outline:none!important;color:#fff!important;font-size:20px;line-height:1;cursor:pointer;opacity:1;transition:background-color .15s ease,transform .15s ease}
+/* the icon markup is an <i class="fa-solid fa-xmark"> → guaranteed white "×" glyph, perfectly centred */
+.lshower-close i{margin:0!important;font-size:20px;line-height:1;color:#fff}
+/* kill the app-wide focus ring / ripple overflow that made the pill look cut off or haloed */
 .lshower-close,.lshower-close:focus,.lshower-close:focus-visible,.lshower-close:active{outline:none!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent}
-.lshower-close:hover,.lshower-close:focus-visible{background:rgba(255,255,255,.12)!important;opacity:1;transform:scale(1.08)}
+.lshower-close:hover{background:rgba(255,255,255,.22)!important;transform:scale(1.06)}
 .lshower-close:active{transform:scale(.94)}
 /* REMOVED (old centred modal head): .lshower-head / .lshower-kicker / .lshower-head h2 / .lshower-head p — replaced by the two-column layout below */
 /* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
@@ -166,7 +188,7 @@ body.lsh-out .lshower{opacity:0}
    a background/crossfade layer stacking above the content. */
 .lshower-bg{z-index:0!important} /* single background wrapper — always behind everything */
 .lshower-frost{z-index:0}        /* frost lives INSIDE .lshower-bg, never above content */
-.lshower-grid,.lshower-foot,.lshower-close{position:relative;z-index:1}
+.lshower-grid,.lshower-foot{position:relative;z-index:1} /* .lshower-close is position:fixed with its own top-tier z-index (see FIX 1 above) */
 /* content tier above the background — grid/foot/close are position:absolute with z-index:1 below */
 /* ---- FIX 2: two columns filling the FULL screen (grid overlays the whole viewport,
    the hint footer floats on top of it instead of eating a row and leaving a grey strip) ---- */
@@ -204,39 +226,50 @@ body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!import
    both — every re-render flashed it back to invisible). Static final state instead. */
 .lsh-name{margin:6px 0 0;max-width:100%;font:700 clamp(20px,2.6vw,34px)/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none!important;color:#fff;text-shadow:0 2px 18px rgba(0,0,0,.55)}
 .lsh-sub{margin:2px 0 0;max-width:100%;font:500 clamp(14px,1.4vw,18px)/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none!important;text-shadow:0 2px 14px rgba(0,0,0,.5)}
-/* ---- APPLE HIG progress bar: thin 4px rounded track (rgba white .3), solid-white fill, hidden
-   thumb that appears on hover/drag while the track grows to 8px. Time labels BELOW the bar
-   (elapsed left, remaining −m:ss right), 12px white 60%, tabular-nums. No red anywhere. ---- */
+/* ---- APPLE HIG progress bar (FIX 5): the elapsed part was invisible because the white fill width
+   was multiplied by --lshTh, which is 0 until hover/drag (`calc(var(--p) * var(--lshTh))`). The fill
+   now ALWAYS spans 0 → current position at full opacity over an rgba(255,255,255,.3) track:
+   `linear-gradient(#fff,#fff) left center / var(--p,0%) 100%` inside a fully-rounded 4px box that
+   grows to 8px on hover/drag, where a white round thumb fades in. fx.js keeps --p published for every
+   .range element and extras.js re-publishes it while the shower is open, so the fill stays in sync
+   with the time label; click + drag seeking is untouched (same native <input type=range>). ---- */
 .lsh-seek{display:flex;flex-direction:column;align-items:stretch;gap:5px;width:min(100%,420px);margin-top:10px}
 .lsh-times{display:flex;justify-content:space-between;font:500 12px/1 -apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",system-ui,sans-serif;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums;letter-spacing:.01em}
 #lshSeek{-webkit-appearance:none;appearance:none;width:100%;height:22px;margin:0;padding:0;background:transparent!important;border:0!important;box-shadow:none!important;cursor:pointer;--lshTh:0}
-#lshSeek::-webkit-slider-runnable-track{height:4px;border-radius:99px;box-shadow:none;background:linear-gradient(#fff,#fff) left center/calc(var(--p,0%) * var(--lshTh,0)) 4px no-repeat,rgba(255,255,255,.3)}
+/* 4px pill track: solid-white played portion from the left up to --p, unplayed = rgba(255,255,255,.3) */
+#lshSeek::-webkit-slider-runnable-track{height:4px;border-radius:99px;box-shadow:none;background:linear-gradient(90deg,#fff 0 100%) left center/var(--p,0%) 100% no-repeat,rgba(255,255,255,.3)}
 #lshSeek::-moz-range-track{height:4px;border-radius:99px;box-shadow:none;background:rgba(255,255,255,.3)}
 #lshSeek::-moz-range-progress{height:4px;border-radius:99px;background:#fff}
 #lshSeek::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;border-radius:50%;border:0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.5);opacity:var(--lshTh,0);transition:opacity .15s ease,width .15s ease,height .15s ease,margin-top .15s ease}
 #lshSeek::-moz-range-thumb{width:12px;height:12px;border-radius:50%;border:0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.5);opacity:var(--lshTh,0);transition:opacity .15s ease}
 /* hover / focus / drag: track grows 4→8px and the thumb fades in (extras.js sets --lshTh during a
-   pointer-drag because :hover doesn't hold while dragging) */
+   pointer-drag because :hover doesn't hold while dragging). Fill still driven purely by --p. */
 #lshSeek:hover,#lshSeek:focus-visible,#lshSeek.lsh-drag{--lshTh:1}
-#lshSeek:hover::-webkit-slider-runnable-track,#lshSeek:focus-visible::-webkit-slider-runnable-track,#lshSeek.lsh-drag::-webkit-slider-runnable-track{height:8px;background:linear-gradient(#fff,#fff) left center/calc(var(--p,0%) * var(--lshTh,0)) 8px no-repeat,rgba(255,255,255,.3)}
+#lshSeek:hover::-webkit-slider-runnable-track,#lshSeek:focus-visible::-webkit-slider-runnable-track,#lshSeek.lsh-drag::-webkit-slider-runnable-track{height:8px;background:linear-gradient(90deg,#fff 0 100%) left center/var(--p,0%) 100% no-repeat,rgba(255,255,255,.3)}
 #lshSeek:hover::-webkit-slider-thumb,#lshSeek:focus-visible::-webkit-slider-thumb,#lshSeek.lsh-drag::-webkit-slider-thumb{margin-top:-2px}
 #lshSeek:hover::-moz-range-track,#lshSeek.lsh-drag::-moz-range-track{height:8px}
 #lshSeek:hover::-moz-range-progress,#lshSeek.lsh-drag::-moz-range-progress{height:8px}
 #lshSeek:focus{outline:none!important}
-/* ---- APPLE HIG transport: plain filled white glyphs, NO circle/border/backdrop/red. Prev/next
-   32px hit area with 32px glyph, play/pause 44px hit area with 44px glyph. Hover: scale 1.08 +
-   faint translucent-white rounded background; press: scale .94; 150ms transitions. ---- */
-.lsh-ctrls{display:flex;align-items:center;justify-content:center;gap:26px;margin-top:10px}
-/* every direct child = one 44x44 hit area (prev/play/next) — the glyph inside sizes itself */
-.lsh-ctrls>*{all:unset;-webkit-appearance:none;appearance:none;box-sizing:border-box;display:grid;place-items:center;width:44px;height:44px;border:0!important;border-radius:14px;background:transparent!important;box-shadow:none!important;color:#fff!important;cursor:pointer;opacity:.92;transition:transform .15s ease,background-color .15s ease,opacity .15s ease}
-.lsh-ctrls>#lshPrev,.lsh-ctrls>#lshNext{width:32px;height:32px;border-radius:10px}
-.lsh-ctrls svg{width:28px;height:28px;fill:currentColor;background:none!important}
-.lsh-ctrls>#lshPlay svg{width:44px;height:44px}
+/* ---- APPLE HIG transport (FIX 2): NO background box behind any glyph. Each button is a plain flex
+   hit area — display:flex; align-items:center; justify-content:center; background:transparent;
+   border:none; padding:0. Play/pause = 64x64 with a 40px white glyph dead-centred (the old 44px box
+   holding a 44px svg made the triangle look off-centre); prev/next are plain 28px white glyphs in
+   32x32 hit areas, vertically aligned on the same centre line, equal 28px gaps. The ONLY hover state
+   is a circular rgba(255,255,255,.12) wash (border-radius:50%) — never a rounded square, and only on
+   :hover. `all:unset` first so no app-wide .iconbtn/.primary pill, gradient or shadow can leak in. ---- */
+.lsh-ctrls{display:flex;align-items:center;justify-content:center;gap:28px;margin-top:10px}
+.lsh-ctrls>*{all:unset;-webkit-appearance:none;appearance:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0!important;border:0!important;border-radius:50%;background:transparent!important;background-color:transparent!important;box-shadow:none!important;color:#fff!important;cursor:pointer;opacity:.92;line-height:1;transition:transform .15s ease,background-color .15s ease,opacity .15s ease}
+.lsh-ctrls>#lshPrev,.lsh-ctrls>#lshNext{width:32px;height:32px;border-radius:50%}
+.lsh-ctrls>#lshPlay{width:64px;height:64px;border-radius:50%}
+/* glyphs: prev/next 28px, play/pause 40px — all pure white, no fill/background of their own */
+.lsh-ctrls svg{width:28px;height:28px;fill:currentColor;background:none!important;display:block}
+.lsh-ctrls>#lshPlay svg{width:40px;height:40px}
 .lsh-ctrls i{font-size:17px;background:none!important;text-shadow:0 1px 10px rgba(0,0,0,.4)}
 .lsh-ctrls>*>*{position:relative;z-index:1}
-.lsh-ctrls>*:hover{transform:scale(1.08);background:rgba(255,255,255,.12)!important;opacity:1}
+/* hover/focus: circle only (never a square), and ONLY on hover */
+.lsh-ctrls>*:hover{transform:scale(1.06);background-color:rgba(255,255,255,.12)!important;border-radius:50%;opacity:1}
 .lsh-ctrls>*:active{transform:scale(.94)}
-.lsh-ctrls>*:focus,.lsh-ctrls>*:focus-visible{outline:none!important;box-shadow:none!important;background:rgba(255,255,255,.12)!important}
+.lsh-ctrls>*:focus,.lsh-ctrls>*:focus-visible{outline:none!important;box-shadow:none!important}
 /* narrow screens / portrait: stack — small cover + title/artist on top, lyrics below */
 @media(max-width:860px),(orientation:portrait) and (max-height:640px){
  .lshower-grid{grid-template-columns:minmax(0,1fr);align-content:start;gap:14px;padding:clamp(54px,9vh,74px) 18px 0}

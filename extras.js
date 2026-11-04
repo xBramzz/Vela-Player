@@ -121,6 +121,13 @@ const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("
 /* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
    any transformed/padded container (e.g. an older cached index.html), lift it out now. */
 try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
+/* FIX 1b (close button cut off in the corner + showing a "<"): make sure the close button is really
+   the × control and lives INSIDE .lshower — if an old cached page left it as a direct <body> child it
+   inherited the app-shell's padding/overflow and got clipped into a corner, where the app-wide
+   `.secondary:not(.icon) i{margin-right:0}` / icon-font fallbacks rendered it as a chevron. It is
+   styled position:fixed top/right 24px (extras.css), so it stays glued to the TOP-RIGHT either way. */
+try{const CL=$("lshClose");if(CL){if(CL.parentNode!==SH)SH.append(CL);CL.classList.add("icon");
+ if(!CL.querySelector("i"))CL.textContent="\u00d7" /* plain × glyph — never a chevron */}}catch(e){}
 const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
 /* FIX 1: the cover used to be read ONLY from an <img> inside #cover. app.js paints a plain text
    "♫" glyph there whenever a track has no embedded artwork, so querySelector("img") returned null
@@ -160,10 +167,27 @@ function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return nu
  const cand=Object.values(bins).filter(e=>e.n>=2).map(e=>{const r=e.r/e.n,g=e.g/e.n,b=e.b/e.n,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;let s=df/(1-Math.abs(2*l-1)||1);s=Math.min(1.2,s*1.2);return{r,g,b,l,s,n:e.n}}).sort((a,b)=>b.n-a.n);
  const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.hypot(c0.r-o.r,c0.g-o.g,c0.b-o.b)>.17))out.push(c0)}
  while(out.length<4&&cand.length&&out.length<cand.length)out.push(cand[out.length]);
- return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;p.r=r*k;p.g=g*k;p.b=b*k;r=p.r;g=p.g;b=p.b}return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
-/* ONLY fallback when the canvas is CORS-tainted / unreadable: neutral dark grays (never theme red) */
-function meshFallback(){return["0.10 0.10 0.11","0.16 0.16 0.18","0.07 0.07 0.08","0.22 0.22 0.24","0.12 0.12 0.13"].map(s=>{const [r,g,b]=s.split(" ").map(Number);return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`})}
-const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["60vmax","58vmax","54vmax","60vmax","52vmax"], /* max ~60vmax — no giant single blur element */
+/* FIX 4: return the boosted dominant colours (saturation ×1.3, slightly brighter, no dark tint) as
+   "r g b" triples for rgb(var(--c)/alpha); the old .82 dimming of light pixels is gone. */
+ return out.length?out.map(p=>{const[r,g,b]=boost(p.r*255,p.g*255,p.b*255);return`${r} ${g} ${b}`}):null}catch(e){return null}}
+/* FIX 4 (background too dark/dull): the old code sampled REAL cover pixels but then multiplied them
+   by .82 for light colours and, when the canvas was unreadable, fell back to near-black grays — so a
+   red/orange/beige cover produced an almost black background. Now every sampled colour is pushed
+   through boost(), which raises saturation ×1.3 (clamped) and brightness slightly (×1.12, clamped at
+   255) with NO dark tinting; the fallback palette uses the live cover theme (--blood/--blood-hi/
+   --accent/--focus read from :root) instead of grays, so even a CORS-tainted cover keeps the screen
+   colourful. The CSS side renders these at rgb(var(--c)/.85…1) alpha (see .lsh-blob). */
+const clamp255=v=>Math.max(0,Math.min(255,Math.round(v)));
+function boost(r,g,b){ /* saturate ×1.3 around luminance + a touch brighter — never darkened */
+ const L=.299*r+.587*g+.114*b;
+ return[clamp255((L+(r-L)*1.3)*1.12),clamp255((L+(g-L)*1.3)*1.12),clamp255((L+(b-L)*1.3)*1.12)]}
+function cssRGB(name,fallback){try{const v=getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+ const m=v.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);if(m){const h=m[1],f=h.length===3?h.replace(/./g,c=>c+c):h;
+ return[parseInt(f.slice(0,2),16),parseInt(f.slice(2,4),16),parseInt(f.slice(4,6),16)]}}catch(e){}return fallback}
+/* ONLY used when the canvas is CORS-tainted / unreadable: warm tones taken from the live cover theme */
+function meshFallback(){const A=cssRGB("--blood",[196,24,42]),B=cssRGB("--blood-hi",[255,59,71]),C=cssRGB("--accent",[168,16,31]),D=cssRGB("--focus",[255,122,130]);
+ return[A,B,C,D,[clamp255(A[0]*.7+90),clamp255(A[1]*.55+40),clamp255(A[2]*.5+30)]].map(c=>`${c[0]} ${c[1]} ${c[2]}`)}
+const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["68vmax","62vmax","54vmax","70vmax","50vmax"], /* FIX 3: big soft blobs (50–70vmax), heavily blurred → no visible edge */
  MF=[{a:.30,b:.22,c:.16,d:.26},{a:.24,b:.34,c:.22,d:.14},{a:.34,b:.18,c:.12,d:.28},{a:.2,b:.28,c:.32,d:.18},{a:.28,b:.22,c:.26,d:.32}];
 const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
 function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
