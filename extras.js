@@ -149,7 +149,13 @@ function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.cur
    the rAF loop runs ONLY while the overlay is open and never touches layout, so it can't affect
    the left column or the lyrics. Respects prefers-reduced-motion (static blobs, no pulse). */
 const reduceMotion=matchMedia("(prefers-reduced-motion: reduce)").matches;
-const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
+const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshPulse=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
+/* TEMP DEBUG (#4): live bass readout in the bottom-left corner while the shower is open.
+   To remove: delete this dbg()/dbgStop() block, their two call sites in meshStart()/meshStop()
+   and the .lsh-bass-debug rule at the end of extras.css. */
+function dbg(v){let d=$("lshBassDbg");if(!d){d=document.createElement("div");d.id="lshBassDbg";d.setAttribute("aria-hidden","true");document.body.append(d)}
+ d.textContent="bass "+(v==null?"–":v.toFixed(3))+(v==null&&meshLow.b?" [analyser all-zero]":"")}
+function dbgStop(){const d=$("lshBassDbg");if(d)d.remove()}
 /* HSL -> "r g b" triple for CSS rgb(var(--c)/alpha) */
 const hslRGB=(h,s,l)=>{h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.max(0,Math.min(1,l));
  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return `${f(0)} ${f(8)} ${f(4)}`};
@@ -181,8 +187,14 @@ const MPOS=[[46,40],[16,22],[78,24],[24,78],[74,70]],MSZ=["72vmax","60vmax","78v
    blob is always safe; only a genuinely cross-origin image taints the canvas (→ neutral fallback). */
 function meshSrc(){const c=(SHC&&(SHC.currentSrc||SHC.src))||"";if(c)return c;const im=$("cover")&&$("cover").querySelector("img");return(im&&im.src)||shCoverSrc()}
 const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
-function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
- const sp=document.createElement("div");sp.className="lsh-spin";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
+/* THREE nested layers — NEVER put the bass transform and a keyframe animation on one element:
+     .bg-pulse  (outer, also carries .lsh-mesh) : ONLY scale + opacity + brightness from the bass
+     .bg-rotate (middle, also carries .lsh-spin): ONLY the slow rotation (JS-written --lshSpin angle)
+     .lsh-blob  (inner)                         : ONLY the per-blob drift (--tx/--ty/--sx/--sy)
+   Previously the pulse shared .lsh-spin with the rotation, so both fought over `transform` and the
+   bass was invisible. */
+function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh bg-pulse";m.setAttribute("aria-hidden","true");
+ const sp=document.createElement("div");sp.className="lsh-spin bg-rotate";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
  /* FIX (colours didn't match the cover): sample the SHOWER'S OWN cover copy first — it is the exact
     artwork being displayed and (unlike #cover img) is guaranteed to be loaded here. */
  let cols=meshColors(SHC)||meshColors($("cover").querySelector("img"));
@@ -199,28 +211,65 @@ function meshPreload(src){if(!src||src===meshTried||/^(data|blob):/.test(src))re
  const probe=new Image();probe.decoding="async";
  probe.onload=()=>{if(meshPending!==src)return;meshPending=null;if(!SH.hidden&&meshColors(probe))meshSet(true)};
  probe.onerror=()=>{if(meshPending===src)meshPending=null};probe.src=src}
-function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;mesh=n;
+function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh,wasRunning=!!meshRaf;mesh=n;
  if(reduceMotion||lite){if(o)o.remove()}else{n.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
  SHBG.prepend(n);
- if(reduceMotion||lite){meshStop();return}meshStart()}
+ if(reduceMotion||lite){meshStop();return}
+ if(wasRunning){/* track change while the shower is open: keep the SAME rAF loop (no restart/stutter),
+   just re-target it at the new .bg-pulse and carry the smoothed bass + spin angle over */
+  cancelAnimationFrame(meshRaf);meshRaf=0;meshPulse=n;n.spin=o?o.spin||0:0;meshStart()}
+ else meshStart()}
 function meshLow(){/* average of the lowest analyser bins ≈ 20–120 Hz — reuses fx.js's existing
  analysers (DetuneFX.analyser / .analyserB during a crossfade); creates nothing, changes no sound */
- const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
+ const FX=window.DetuneFX;if(!FX)return null;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return null;
+ /* null (not 0) = "no analyser yet" — meshStart shows that in the debug readout so a dead graph is
+    distinguishable from a quiet track */
  const n=an.frequencyBinCount,buf=meshLow.b&&(meshLow.b.length===n)?meshLow.b:(meshLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
  const hz=an.context.sampleRate/an.fftSize;let s=0,c=0;for(let i=Math.max(1,(20/hz)|0);i<=Math.min(n-1,(120/hz)|0);i++){s+=buf[i];c++}
  return c?s/c/255:0}
-function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;if(mesh)mesh.style.removeProperty("--lshBass")}
-function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;let last=performance.now(),acc=0,spin=mesh.spin||0;
+/* FIX (analyser returned zeros → dead pulse): the audio graph is built lazily on the FIRST play,
+   so DetuneFX.analyser is null until then; and a browser can park the AudioContext in "suspended"
+   (tab throttling / autoplay policy) which freezes getByteFrequencyData at 0. Resume it from THIS
+   user gesture (opening the shower is a click/keydown) via app.js's own ensure-graph path — no new
+   context, no second analyser, no sound change. The audio itself is always a same-origin object URL
+   or a local file, so nothing here is cross-origin. */
+function meshResumeCtx(){const AC=window.AudioContext||window.webkitAudioContext;
+ if(AC&&AC.state==="running")return; /* ctx exists and is already running */
+ const an=window.DetuneFX&&(DetuneFX.analyser||DetuneFX.analyserB);
+ if(an&&an.context&&an.context!==AC&&an.context.state!=="running"){try{an.context.resume().catch(()=>{})}catch{}}
+ try{if(!a.paused){const p=(window.DetuneApp&&DetuneApp.setupAudio)?DetuneApp.setupAudio():null;if(p&&p.catch)p.catch(()=>{})}}catch{}}
+function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;dbgStop();
+ if(meshPulse){meshPulse.style.removeProperty("--bg-bass");meshPulse.style.transform="";meshPulse.style.opacity="";meshPulse.style.filter=""}
+ if(mesh)mesh.style.removeProperty("--lshBass")}
+function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;
+ meshPulse=mesh;meshResumeCtx(); /* #1: make sure the analyser feeding us is actually alive */
+ let last=performance.now(),acc=0,spin=mesh.spin||0,dbgT=0;
  const step=t=>{meshRaf=requestAnimationFrame(step);let dt=(t-last)/1000;last=t;if(!(dt>0)||dt>.25)dt=.016;
   if(document.hidden)return;acc+=dt;if(acc<.033)return;acc=0; /* cap at ~30 updates/s — plenty for slow drift */
-  const low=meshLow(),tgt=Math.min(1,Math.max(0,(low-.18)/.5));meshB=tgt>meshB?meshB+(tgt-meshB)*.55:meshB+(tgt-meshB)*.07; /* fast attack, slow release */
+  const rawLow=meshLow(),low=rawLow==null?0:rawLow,tgt=Math.min(1,Math.max(0,(low-.18)/.5));
+  /* #3: one-pole envelope with TIME-BASED coefficients — attack τ≈60ms, release τ≈400ms, so the
+     smoothing is identical at 30, 60 or 120 fps (the old fixed .55/.07 factors were frame-rate
+     dependent). Fast attack = the pulse pops on the kick, slow release = no strobing. */
+  const kA=1-Math.exp(-(acc||.033)/.06),kR=1-Math.exp(-(acc||.033)/.4);
+  meshB=tgt>meshB?meshB+(tgt-meshB)*kA:meshB+(tgt-meshB)*kR;
+  /* THE PULSE — written directly on .bg-pulse (transform + opacity + brightness ONLY, no keyframes
+     on this element). Kept on BOTH --bg-bass and the inline props because older parsers can't resolve
+     var() inside calc() within transform/filter. */
+  if(meshPulse){const b=meshB.toFixed(3);
+   meshPulse.style.setProperty("--bg-bass",b);
+   meshPulse.style.transform="scale(calc(1 + "+b+" * 0.25)) translateZ(0)";
+   meshPulse.style.opacity=(0.85+meshB*0.15).toFixed(3);
+   meshPulse.style.filter="brightness(calc(1 + "+b+" * 0.25))"}
   mesh.style.setProperty("--lshBass",meshB.toFixed(3));meshT+=dt*(1+meshB*.7); /* bass speeds the whole drift up (slow breathing, never flashing) */
   spin+=dt*(6+meshB*4);/* deg/s: one turn per 60s baseline (6°/s), up to ~1.67x faster on the kick */mesh.spin=spin;
-  const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--lshSpin",(spin%360).toFixed(2)+"deg");
+  const sp0=mesh.querySelector(".lsh-spin,.bg-rotate");if(sp0)sp0.style.setProperty("--lshSpin",(spin%360).toFixed(2)+"deg");
   const tt=meshT;for(const b of (sp0||mesh).children){const i=+b.dataset.i||0,f=MF[i]||MF[0],ph=+b.dataset.ph,sp=meshSpd(b),x=tt*sp;
    b.style.setProperty("--tx",(Math.sin(x*f.a+ph)*9).toFixed(2)+"%");b.style.setProperty("--ty",(Math.cos(x*f.b+ph*1.7)*8).toFixed(2)+"%");
    const sc=1+meshB*.2;b.style.setProperty("--sx",sc.toFixed(3));b.style.setProperty("--sy",(sc*(1+.05*Math.sin(x*f.c+ph))).toFixed(3));
-   b.style.opacity=(.62+meshB*.22).toFixed(3)}};
+   b.style.opacity=(.62+meshB*.22).toFixed(3)}
+  /* #4 TEMP DEBUG: raw low-band (pre-normalisation) 0..1 in the bottom-left corner. rawLow===null
+     means there is no analyser yet (nothing played) — that is exactly the "returns zeros" case. */
+  dbgT+=acc;if(dbgT>=.1||rawLow==null){dbgT=0;dbg(rawLow)}};
  meshRaf=requestAnimationFrame(step)}
 function shArt(v){const img=$("cover").querySelector("img"),src=(img&&img.src)||shCoverSrc();
  const top=v?SHA:SHB2,bot=v?SHB2:SHA; /* two stacked copies of the blurred cover CROSSFADE (~1s CSS transition) on track change */

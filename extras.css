@@ -151,12 +151,25 @@ body.lsh-out .lshower{opacity:0}
 /* FIX (hard-edged orange disc at the bottom): the mesh container had contain:paint, which CLIPS its
    children to the viewport — a 60vmax blob hanging off an edge got sliced into a straight line. The
    clipping is already handled by .lshower-bg{overflow:hidden}, so no containment here. */
+/* THREE nested layers — NEVER put the bass pulse and a keyframe animation on one element:
+   .bg-pulse (outer, = .lsh-mesh) ONLY scale + opacity + brightness from the bass (JS inline style),
+   NO CSS animation here; .bg-rotate (middle, = .lsh-spin) ONLY the slow rotation; .lsh-blob (inner)
+   ONLY its own drift. The old code had rotate+scale+bass on .lsh-spin at once — the two transform
+   sources fought each other and the bass was invisible. */
 .lsh-mesh{position:absolute;inset:0;z-index:0;pointer-events:none}
-/* bass pulse lives on the SPIN wrapper (one composited layer, not per-blob): extras.js writes
-   --lshBass 0..1 here → scale 1.0→1.18, opacity +0.1, brightness lift. Only transform/filter/
-   opacity change — layout is never touched, so the left column and lyrics can't be affected. */
-.lsh-spin{--lshBass:0;position:absolute;inset:-25%;will-change:transform,opacity,filter;transform:rotate(var(--lshSpin,0deg)) scale(calc(1 + var(--lshBass)*.18)) translateZ(0);opacity:calc(.9 + var(--lshBass)*.1);filter:blur(80px) saturate(calc(1.5 + var(--lshBass)*.12)) brightness(calc(1.04 + var(--lshBass)*.1))}
+.bg-pulse{--bg-bass:0;transform-origin:50% 50%;will-change:transform,opacity,filter;transition:none;
+ /* RESTING state (also what reduced-motion / lite keep): extras.js overwrites these three inline
+    every frame while the shower is open — scale 1→1.25, opacity .85→1, brightness 1→1.25 */
+ transform:scale(calc(1 + var(--bg-bass) * 0.25)) translateZ(0);opacity:calc(.85 + var(--bg-bass) * .15);filter:brightness(calc(1 + var(--bg-bass) * .25))}
+/* MIDDLE LAYER — ONLY the slow rotation. No scale/opacity/filter from the bass here (that lives on
+   .bg-pulse above it) so nothing ever writes two transforms to one element. The blur/saturate are
+   static and inherited by every blob (same visual result as before). */
+.lsh-spin,.bg-rotate{--lshBass:0;position:absolute;inset:-25%;will-change:transform;transform:rotate(var(--lshSpin,0deg)) translateZ(0);filter:blur(80px) saturate(1.5)}
 @keyframes lshSpin{to{transform:rotate(360deg)}} /* fallback only — used when reduced-motion/lite */
+/* #4 TEMP DEBUG readout (extras.js dbg()): raw bass 0..1 bottom-left while the overlay is open.
+   To remove: delete this rule + the dbg()/dbgStop() block in extras.js. */
+#lshBassDbg{position:fixed;left:14px;bottom:12px;z-index:2147483646;pointer-events:none;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;color:#fff;background:rgba(0,0,0,.5);padding:4px 8px;border-radius:6px;opacity:.75}
+body:not(.lyrshow-open) #lshBassDbg{display:none}
 /* FIX (hard-edged orange disc): blur(90px) on EVERY blob + a gradient that fades to FULLY
    transparent at 70% + no border/outline/box-shadow anywhere + sizes 50–70vmax. A blob can never
    read as a distinct circle. Vibrancy: colours at .95 alpha, screen blend, opacity .9. */
@@ -367,10 +380,13 @@ html:not(.lite) .lshower-body>.lyr{position:relative}
 .lshower-empty{display:grid;gap:10px;justify-items:center;align-content:center;height:100%;color:rgba(255,255,255,.6);font:500 16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;text-align:center}
 .lshower-empty i{font-size:38px;opacity:.6}
 /* reduced motion & lite mode — STATIC blobs (no drift, no pulse, no spin), plain colours. The bass
-   rAF loop never runs in these modes (extras.js), so --lshBass stays 0 and the calc()s collapse to
-   their resting values; we still pin transform/opacity/filter here defensively. */
-@media(prefers-reduced-motion:reduce){.lshower{animation:none;transition:none}.lsh-mesh-in,.lsh-mesh-out{animation:none}.lsh-spin{animation:lshSpin 60s linear infinite;transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}.lsh-blob{transform:translate(-50%,-50%) translateZ(0)}.lshower-bg img{transition:none;transform:scale(1.6) translateZ(0)}.lshower-body>.lyr{transition:color .3s ease}.lshower-body>.lyr.on{font-weight:800}}
+   rAF loop never runs in these modes (extras.js): .bg-pulse gets NO inline transform/opacity/filter,
+   so it must fall back to its RESTING values purely from CSS (scale 1 / opacity .85 / brightness 1).
+   The rotation is a real CSS keyframe animation here (JS stops writing --lshSpin) — on the MIDDLE
+   layer only, never on .bg-pulse, so the two transforms can never fight again. */
+@media(prefers-reduced-motion:reduce){.lshower{animation:none;transition:none}.lsh-mesh-in,.lsh-mesh-out{animation:none}.bg-pulse{transform:scale(1) translateZ(0);opacity:.85;filter:brightness(1)}.lsh-spin{animation:lshSpin 60s linear infinite;transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}.lsh-blob{transform:translate(-50%,-50%) translateZ(0)}.lshower-bg img{transition:none;transform:scale(1.6) translateZ(0)}.lshower-body>.lyr{transition:color .3s ease}.lshower-body>.lyr.on{font-weight:800}}
 html.lite .lsh-mesh-in,html.lite .lsh-mesh-out{animation:none}
+html.lite .bg-pulse{transform:scale(1) translateZ(0);opacity:.85;filter:brightness(1)}
 html.lite .lsh-spin{transform:none;opacity:.9;filter:blur(80px) saturate(1.5)}
 html.lite .lsh-blob{transform:translate(-50%,-50%) translateZ(0)}
 html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
