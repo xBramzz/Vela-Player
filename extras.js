@@ -120,6 +120,13 @@ const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("
    any transformed/padded container (e.g. an older cached index.html), lift it out now. */
 try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
 const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
+/* FIX 1: the cover used to be read ONLY from an <img> inside #cover. app.js paints a plain text
+   "♫" glyph there whenever a track has no embedded artwork, so querySelector("img") returned null
+   and the left column (artwork + everything that depends on shArt) looked dead/empty. Now we take
+   the img if present, otherwise fall back to the real object URL of the loaded track's cover blob —
+   and if the track genuinely has no artwork we show a themed placeholder instead of nothing. */
+const shNoArt="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cdefs%3E%3CradialGradient id='g' cx='50%25' cy='38%25' r='75%25'%3E%3Cstop offset='0' stop-color='%236b0912'/%3E%3Cstop offset='1' stop-color='%230a0406'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect width='400' height='400' fill='url(%23g)'/%3E%3Ctext x='200' y='248' font-size='150' text-anchor='middle' fill='%23ff3b47' fill-opacity='.5' font-family='Georgia,serif'%3E%E2%99%AB%3C/text%3E%3C/svg%3E";
+function shCoverSrc(){try{const c=$("cover");const im=c&&c.querySelector("img");if(im&&im.src)return im.src;const t=(window.Detune&&Detune.current&&Detune.current())||(window.C_&&C_.cur&&C_.cur())||null;if(t&&t.coverUrl)return t.coverUrl;if(t&&t.cover&&!t.coverUrl)t.coverUrl=safeURL(t.cover);if(t&&t.coverUrl)return t.coverUrl}catch(e){}return shNoArt}
 function shDepth(){if(lite||!synced)return;const ch=SHB.children;for(let k=0;k<ch.length;k++){const c=ch[k];c.classList.remove("pn1","pn2","pn3","pnf");if(k===shIdx||c.classList.contains("on"))continue;const d=Math.abs(k-shIdx);c.classList.add(d<=1?"pn1":d===2?"pn2":d===3?"pn3":"pnf")}}
 function shRender(){SHB.replaceChildren();shIdx=-1;
  if(!lines.length){const e=document.createElement("div");e.className="lshower-empty";const i0=document.createElement("i");i0.className="fa-solid fa-microphone-lines";const p0=document.createElement("p");p0.textContent="No lyrics for this track yet.";const s0=document.createElement("span");s0.textContent="Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";e.append(i0,p0,s0);SHB.append(e);return}
