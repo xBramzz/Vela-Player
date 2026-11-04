@@ -140,7 +140,8 @@ function shRender(){SHB.replaceChildren();shIdx=-1;
  SHB.append(f);shTick(true)}
 function shScrollTo(el){if(!el)return;SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/3),behavior:(lite||document.documentElement.dataset.shInit==="0")?"auto":"smooth"})}
 function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.currentTime+.25;let i=-1;for(let k=0;k<lines.length;k++){if(lines[k].t<=t)i=k;else break}
- if(i===shIdx&&!force)return;SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(!el)return;el.classList.add("on");shDepth();
+ if(i===shIdx&&!force)return;if(!SHB.children[shIdx]?.classList.contains("on"))shProgress(); /* lyric-jump / arrow-key seeks: fill must follow instantly */
+ SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(el)el.classList.add("on");shDepth();
  if(Date.now()>shHold)shScrollTo(el)}
 /* ---------- Apple-Music-style MOVING MESH BACKGROUND (full-screen lyric shower) ----------
    5 dominant colours sampled from the current cover → huge blurred blobs drifting on their own
@@ -159,14 +160,21 @@ function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return nu
  const px=[];for(let i=0;i<d.length;i+=4){if(d[i+3]<128)continue;const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
   let h=0;if(df>.04){h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360}else l<.04||l>.96?h=-1:h=-1; /* achromatic → hue bucket -1 (grays) */
   px.push({r,g,b,h,s:df,l})}
- if(px.length<6)return null;const bins={};for(const p of px){const k=p.s<=.04?"g":String((p.h/30)|0)+(p.l<.34?"L":p.l<.67?"M":"H");const e=bins[k]||(bins[k]={r:0,g:0,b:0,n:0});e.r+=p.r;e.g+=p.g;e.b+=p.b;e.n++}
+ if(px.length<6)return null;const bins={};for(const p of px){const k=p.s<=.04?"A":String((p.h/30)|0)+(p.l<.34?"L":p.l<.67?"M":"H");const e=bins[k]||(bins[k]={r:0,g:0,b:0,n:0});e.r+=p.r;e.g+=p.g;e.b+=p.b;e.n++}
  const cand=Object.values(bins).filter(e=>e.n>=2).map(e=>{const r=e.r/e.n,g=e.g/e.n,b=e.b/e.n,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;let s=df/(1-Math.abs(2*l-1)||1);s=Math.min(1.2,s*1.2);return{r,g,b,l,s,n:e.n}}).sort((a,b)=>b.n-a.n);
  const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.hypot(c0.r-o.r,c0.g-o.g,c0.b-o.b)>.17))out.push(c0)}
  while(out.length<4&&cand.length&&out.length<cand.length)out.push(cand[out.length]);
- return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;p.r=r*k;p.g=g*k;p.b=b*k;r=p.r;g=p.g;b=p.b}return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
+ return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;r*=k;g*=k;b*=k}
+ /* FIX (right half too grey): saturation boost — push every sampled colour away from the gray axis
+    (keeps hue, kills flat greys) so all five blobs stay rich on BOTH halves of the screen */
+ const l2=.299*r+.587*g+.114*b,mx=Math.max(r,g,b),mn=Math.min(r,g,b),k2=Math.min(1.6,.28/Math.max(.0001,mx-mn));
+ r=Math.max(0,Math.min(1,l2+(r-l2)*k2));g=Math.max(0,Math.min(1,l2+(g-l2)*k2));b=Math.max(0,Math.min(1,l2+(b-l2)*k2));
+ return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
 /* ONLY fallback when the canvas is CORS-tainted / unreadable: neutral dark grays (never theme red) */
 function meshFallback(){return["0.10 0.10 0.11","0.16 0.16 0.18","0.07 0.07 0.08","0.22 0.22 0.24","0.12 0.12 0.13"].map(s=>{const [r,g,b]=s.split(" ").map(Number);return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`})}
-const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["64vmax","58vmax","52vmax","66vmax","56vmax"], /* 50–70vmax — soft, never a distinct disc */
+/* spread across the WHOLE viewport (three of the five sit on the right half) so no side of the
+   screen collapses into flat grey; sizes 60–84vmax let the saturated blobs bleed over each other */
+const MPOS=[[46,40],[16,22],[78,24],[24,78],[74,70]],MSZ=["72vmax","60vmax","78vmax","66vmax","84vmax"],
  MF=[{a:.30,b:.22,c:.16,d:.26},{a:.24,b:.34,c:.22,d:.14},{a:.34,b:.18,c:.12,d:.28},{a:.2,b:.28,c:.32,d:.18},{a:.28,b:.22,c:.26,d:.32}];
 /* the cover <img> used for sampling: prefer the shower's own copy (already loaded & same-origin),
    then #cover img, then the main-app object URL. Reading pixels from an object URL / same-origin
@@ -243,11 +251,31 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
   document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}
+/* ---------- PROGRESS FILL + SHUFFLE/REPEAT STATE ----------
+   The bar IS an <input type="range">, so the "fill" is painted on ::-webkit-slider-runnable-track
+   as a solid white layer clipped to var(--progress) (see extras.css). fx.js's global --p publisher
+   is frozen while the shower is open, so we publish --progress here on EVERY timeupdate / seek /
+   duration change — always exactly currentTime/duration*100 (0:29 of 2:55 → 16.6%). No CSS
+   transition is set on it, and hover/drag only change the track HEIGHT (--lshH), never the width. */
+const SK=$("lshSeek");
+function shProgress(){if(!SK)return;
+ const d=Number.isFinite(a.duration)&&a.duration>0?a.duration:0;
+ const t=Math.max(0,Math.min(a.currentTime||0,d));
+ const p=d?Math.min(100,t/d*100):0;
+ SK.style.setProperty("--progress",p.toFixed(2)+"%");
+ SK.style.setProperty("--p",p.toFixed(2)+"%"); /* legacy alias kept in sync */
+ if(!shSeeking)SK.value=String(Math.round(p*10))}
+/* shuffle/repeat live in app.js (#shuffle aria-pressed, #repeat text "Repeat: off|all|one").
+   Mirror that REAL state onto the overlay buttons; the dots/badge are pure CSS (.on/.one). */
+function shModes(){const s=$("shuffle"),r=$("repeat"),SB=$("lshShuffle"),RB=$("lshRepeat");
+ if(SB&&s){const on=s.getAttribute("aria-pressed")==="true";SB.classList.toggle("on",on);SB.setAttribute("aria-pressed",String(on))}
+ if(RB&&r){const m=/one/.test(r.textContent)?"one":/all/.test(r.textContent)?"all":"off";
+  RB.classList.toggle("on",m!=="off");RB.classList.toggle("one",m==="one");RB.setAttribute("aria-pressed",String(m!=="off"));RB.title="Repeat ("+m+") (R)"}}
 function shUI(){if(SH.hidden)return;
  $("lshCur").textContent=fmtT(a.currentTime);
  /* Apple-style: elapsed left, REMAINING as −m:ss right (falls back to total without metadata) */
  $("lshDur").textContent=Number.isFinite(a.duration)?"-"+fmtT(Math.max(0,a.duration-a.currentTime)):fmtT(a.duration);
- if(!shSeeking)$("lshSeek").value=String(Math.round((a.duration?Math.min(1,a.currentTime/a.duration):0)*1000));
+ shProgress();shModes();
  const playing=!a.paused&&!a.ended;
  $("lshPlayIcon").innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
  $("lshPlay").setAttribute("aria-label",playing?"Pause":"Play")}
@@ -261,13 +289,19 @@ $("lshClose").onclick=()=>shOpen(false);
 $("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
 $("lshPrev").onclick=()=>{$("prev")?.click()};
 $("lshNext").onclick=()=>{$("next")?.click()};
-{const SK=$("lshSeek");SK.addEventListener("input",()=>{shSeeking=true;SK.classList.add("lsh-drag");if(Number.isFinite(a.duration))a.currentTime=a.duration*(+SK.value/1000)});
- SK.addEventListener("change",()=>{shSeeking=false;SK.classList.remove("lsh-drag")});SK.addEventListener("pointerup",()=>{shSeeking=false;SK.classList.remove("lsh-drag")});
- /* keep --p (fill %) fresh for the Apple-style track gradient — fx.js's publisher is frozen while
-    the shower is open */
- const shP=()=>{const v=(SK.value-SK.min)/(SK.max-SK.min)*100;SK.style.setProperty("--p",v.toFixed(2)+"%")};
- new MutationObserver(()=>{if(!SH.hidden)shP()}).observe(SK,{attributes:true,attributeFilter:["value"]});shP()}
+/* shuffle / repeat proxy the MAIN player's buttons so there is only ONE source of truth; shModes()
+   then mirrors the real state back onto these buttons (dot + 100% white when on, no dot + 60% off) */
+$("lshShuffle").onclick=()=>{$("shuffle")?.click();shModes()};
+$("lshRepeat").onclick=()=>{$("repeat")?.click();shModes()};
+{SK.addEventListener("input",()=>{shSeeking=true;SK.classList.add("lsh-drag");if(Number.isFinite(a.duration)){a.currentTime=a.duration*(+SK.value/1000);shProgress()}});
+ SK.addEventListener("change",()=>{shSeeking=false;SK.classList.remove("lsh-drag");shProgress()});SK.addEventListener("pointerup",()=>{shSeeking=false;SK.classList.remove("lsh-drag");shProgress()});
+ /* keep --progress (fill %) fresh even for programmatic value writes — fx.js's global --p
+    publisher is frozen while the shower is open */
+ new MutationObserver(()=>{if(!SH.hidden)shProgress()}).observe(SK,{attributes:true,attributeFilter:["value"]});shProgress()}
+/* #shuffle/#repeat can also be toggled from the main app or the S/R keys — follow them live */
+for(const id of["shuffle","repeat"]){const el=$(id);if(el)new MutationObserver(shModes).observe(el,{childList:true,characterData:true,subtree:true,attributes:true,attributeFilter:["aria-pressed","textContent"]})}
 for(const ev of["timeupdate","durationchange"])a.addEventListener(ev,shUI);
+a.addEventListener("seeked",shProgress); /* never leave the fill stuck at a hover/seek-preview position */
 a.addEventListener("play",shUI);a.addEventListener("pause",shUI);a.addEventListener("ended",shUI);
 new MutationObserver(shSync).observe($("title"),{childList:true,characterData:true,subtree:true});
 new MutationObserver(shSync).observe($("artist"),{childList:true,characterData:true,subtree:true});
