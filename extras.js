@@ -121,6 +121,9 @@ const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("
 /* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
    any transformed/padded container (e.g. an older cached index.html), lift it out now. */
 try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
+/* same for the CLOSE button — it must be a DIRECT child of the root overlay so no ancestor with
+   transform/filter/overflow can clip it. Older cached markup left it inside other wrappers. */
+try{const CL=$("lshClose");if(CL&&SH&&CL.parentNode!==SH)SH.prepend(CL)}catch(e){}
 const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
 /* FIX 1: the cover used to be read ONLY from an <img> inside #cover. app.js paints a plain text
    "♫" glyph there whenever a track has no embedded artwork, so querySelector("img") returned null
@@ -163,16 +166,31 @@ function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return nu
  return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;p.r=r*k;p.g=g*k;p.b=b*k;r=p.r;g=p.g;b=p.b}return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
 /* ONLY fallback when the canvas is CORS-tainted / unreadable: neutral dark grays (never theme red) */
 function meshFallback(){return["0.10 0.10 0.11","0.16 0.16 0.18","0.07 0.07 0.08","0.22 0.22 0.24","0.12 0.12 0.13"].map(s=>{const [r,g,b]=s.split(" ").map(Number);return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`})}
-const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["60vmax","58vmax","54vmax","60vmax","52vmax"], /* max ~60vmax — no giant single blur element */
+const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["64vmax","58vmax","52vmax","66vmax","56vmax"], /* 50–70vmax — soft, never a distinct disc */
  MF=[{a:.30,b:.22,c:.16,d:.26},{a:.24,b:.34,c:.22,d:.14},{a:.34,b:.18,c:.12,d:.28},{a:.2,b:.28,c:.32,d:.18},{a:.28,b:.22,c:.26,d:.32}];
+/* the cover <img> used for sampling: prefer the shower's own copy (already loaded & same-origin),
+   then #cover img, then the main-app object URL. Reading pixels from an object URL / same-origin
+   blob is always safe; only a genuinely cross-origin image taints the canvas (→ neutral fallback). */
+function meshSrc(){const c=(SHC&&(SHC.currentSrc||SHC.src))||"";if(c)return c;const im=$("cover")&&$("cover").querySelector("img");return(im&&im.src)||shCoverSrc()}
 const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
 function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
  const sp=document.createElement("div");sp.className="lsh-spin";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
- const img=$("cover").querySelector("img"),cols=meshColors(img)||meshFallback();
+ /* FIX (colours didn't match the cover): sample the SHOWER'S OWN cover copy first — it is the exact
+    artwork being displayed and (unlike #cover img) is guaranteed to be loaded here. */
+ let cols=meshColors(SHC)||meshColors($("cover").querySelector("img"));
+ if(!cols){cols=meshFallback();meshPreload(meshSrc())} /* not decoded yet / tainted → grays now, real rebuild when ready */
  cols.slice(0,5).forEach((rgb,i)=>{const b=document.createElement("div");b.className="lsh-blob";
   b.style.setProperty("--c",rgb);b.style.setProperty("--x",MPOS[i][0]+"%");b.style.setProperty("--y",MPOS[i][1]+"%");
   b.style.setProperty("--sz",MSZ[i]);b.dataset.i=i;b.dataset.t=(Math.random()*20).toFixed(2);b.dataset.ph=(Math.random()*6.283).toFixed(2);sp.append(b)});
  return m}
+/* FIX (colours didn't match the cover): sample only AFTER the image finished decoding — reading a
+   half-loaded img gives smeared/wrong pixels. Decode once per src, then rebuild the mesh with the
+   REAL dominant colours. Skip data:/blob: URLs — those are already readable directly from <img>. */
+let meshPending=null,meshTried="";
+function meshPreload(src){if(!src||src===meshTried||/^(data|blob):/.test(src))return;meshTried=src;meshPending=src;
+ const probe=new Image();probe.decoding="async";
+ probe.onload=()=>{if(meshPending!==src)return;meshPending=null;if(!SH.hidden&&meshColors(probe))meshSet(true)};
+ probe.onerror=()=>{if(meshPending===src)meshPending=null};probe.src=src}
 function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;mesh=n;
  if(reduceMotion||lite){if(o)o.remove()}else{n.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
  SHBG.prepend(n);
