@@ -181,22 +181,34 @@ const SHBG=SH&&SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=
    re-routes the element into the graph, which would have silenced the speakers. An AnalyserNode is a
    pure probe: connecting master→analyser adds no audible path (analysers don't auto-connect to the
    destination), so the audio chain to the speakers is untouched. */
-const shAn=window.DetuneApp&&DetuneApp.audioGraph&&DetuneApp.audioGraph.analyser; /* reuse app.js's post-master probe if present */
-let shCtx=null,shAnalyser=null,shBuf=null,shSrcList=[],shWired=false,shWiredAt=0,shRun=false,shRaf=0,shResumeBound=false;
+/* ROOT CAUSE FOUND (why NOTHING ever reacted): app.js publishes its audio graph only AFTER the
+   whole setupAudio() chain finishes — including `await audioWorklet.addModule(...)`, which can take
+   seconds or fail on a flaky/offline load. Every earlier version of this file read
+   DetuneApp.audioGraph at SCRIPT-LOAD time and cached the result in a const — that was always
+   undefined — and shWire()'s first line bailed out (`if(!G... )return false`) whenever the graph
+   hadn't been published yet. Result: our own bass analyser NEVER existed, shOut stayed 0 forever,
+   coverBassStep wrote 0.000 every frame, AudioMotion never built (same early return), and the
+   blurred cover sat dead at scale(1.6)/brightness(.7). The rAF loop ran perfectly the whole time —
+   it just had no data source. FIX: never cache the graph; re-read window.DetuneApp.audioGraph live
+   EVERY call (the retry block below picks it up within ~1.5 s of app.js publishing it, even if you
+   opened the overlay before playback started). */
+let shCtx=null,shAnalyser=null,shBuf=null,shSrcList=[],shTap=null,shWired=false,shWiredAt=0,shRun=false,shRaf=0,shResumeBound=false;
 function shWire(){
  const G=window.DetuneApp&&DetuneApp.audioGraph;const AC=window.AudioContext||window.webkitAudioContext;
- if(!G||!G.ctx||!AC)return false;
+ if(!G||!G.ctx||!AC||!G.master)return false; /* read LIVE — never a stale load-time snapshot */
  try{
   if(shCtx!==G.ctx){ /* context replaced (teardown / retry): rebuild our probe from scratch */
-   for(const n of shSrcList){try{n.disconnect()}catch{}}shSrcList=[];shAnalyser=null;shXtap=null;shXsrc=null}
+   for(const n of shSrcList){try{n.disconnect()}catch{}}shSrcList=[];shAnalyser=null;shTap=null;shXtap=null;shXsrc=null}
   shCtx=G.ctx;
   if(!shAnalyser){
-   if(shAn&&shAn.context===shCtx){shAnalyser=shAn} /* same context → reuse, zero new nodes */
-   else{shAnalyser=shCtx.createAnalyser();shAnalyser.fftSize=2048;shAnalyser.smoothingTimeConstant=.6;
-    /* FINAL master output → our analyser (and nothing else). master stays connected to
-       ctx.destination exactly as before, so the speakers are unaffected. */
-    try{G.master.connect(shAnalyser)}catch{}
-    try{if(G.wet&&G.wet!==G.master)G.wet.connect(shAnalyser)}catch{}}}
+   /* OWN analyser on the FINAL master GainNode (post volume/mute/pitch/fx). We deliberately do NOT
+      reuse app.js's `analyser`: it taps `compressor` PRE-master (mute/volume ignored) and fx.js is
+      frozen while the shower is open, so nothing else reads it here. AnalyserNode is a pure probe:
+      connecting master→analyser adds no audible path, so the speakers are untouched. */
+   shAnalyser=shCtx.createAnalyser();shAnalyser.fftSize=2048;shAnalyser.smoothingTimeConstant=.6;
+   shTap=shCtx.createGain();shTap.gain.value=1; /* stable handle so we can always disconnect cleanly */
+   try{G.master.connect(shTap);shTap.connect(shAnalyser)}catch{}
+   try{if(G.wet&&G.wet!==G.master){G.wet.connect(shAnalyser)}}catch{}}
   if(!shWired||performance.now()-shWiredAt>1500){ /* deck B is NOT bound via createMediaElementSource
      (see app.js bindDeckB) — captureStream() gives us its real, audible signal during a crossfade.
      Re-acquired after ~1.5 s so a track change that restarts deck B's stream doesn't leave a dead tap. */
@@ -233,6 +245,8 @@ function shBassStep(t){
  let dt=(t-shLast)/1000;shLast=t;if(!(dt>0)||dt>.25)dt=1/60;
  if(document.hidden){return}
  if(performance.now()-shWiredAt>1500)shWire();
+ amaBuild(); /* re-attempt EVERY frame while open — the graph may be published late (see shWire note);
+   no-op once the instance exists, so it costs nothing after the first success */
  const x=shRawLow();
  if(x<0){shAvg+=(0-shAvg)*(1-Math.exp(-dt/1));shOut+=(0-shOut)*(1-Math.exp(-dt/.35))}
  else{
@@ -245,7 +259,11 @@ function shBassStep(t){
   const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--bg-bass",shOut.toFixed(3))} /* ALSO set directly on .lsh-spin: reduced-motion/lite CSS pins transform:none on its ANCESTORS (.lsh-mesh-out crossfade), which would otherwise clip the subtree and freeze an inherited var */
  amaGlowStep(t);coverBassStep(t)} /* glow + blurred-cover bass reaction */
 function shBassStart(){amaGlowMake();if(amaGlow&&SHBG&&amaGlow.parentNode===SHBG)SHBG.append(amaGlow); /* glow always LAST inside .lshower-bg → above mesh, below content */
- if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
+ if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep);
+ /* DIAGNOSTIC (temporary — remove after verifying): proves the rAF loop is actually running.
+    Type in console: DetuneAMA.loop()  → must print "alive @ <timestamp>" every second while open.
+    If it prints "DEAD", nothing below can possibly move and we look upstream instead. */
+ try{window.DetuneAMA&&Object.assign(DetuneAMA,{loop:()=>{console.log(shRun?"alive @ "+Math.round(performance.now()):"DEAD");clearInterval(DetuneAMA._lp);DetuneAMA._lp=setInterval(()=>console.log("bass-loop alive @ "+Math.round(performance.now())+" · wired:"+!!shAnalyser+" · kick:"+shOut.toFixed(3)+" · ama:"+(!!ama&&ama.isOn)),1000)}})}catch(e){}}
 function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
  if(mesh){mesh.style.removeProperty("--bg-bass");const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.removeProperty("--bg-bass")}
  /* reset BOTH blurred-cover <img>s (#lshArt/#lshArtB) so a stale inline --bg-bass can't linger */
@@ -297,7 +315,21 @@ function amaBuild(){if(!SHBG)return;amaGlowMake(); /* glow first, analyzer secon
       ctx.destination; audio stays on app.js's own path.
       source:G.master taps the FINAL master GainNode (post pitch-worklet/fx chain) as a probe —
       createMediaElementSource is never called again (app.js already owns <audio id="audio">). */
+   /* DATA-ONLY instance. VERIFIED against the vendored 4.5.4 build:
+      - constructor(container, options): passing G.ctx as arg 1 with a NON-empty options object is
+        IGNORED (line ~234: options are only hoisted when the first arg is the sole argument) — so
+        the context must ALSO be in options as audioCtx, otherwise AMA news up its own AudioContext.
+      - source:<AudioNode> → connectInput() does node.connect(this._input) — a pure probe; NO
+        createMediaElementSource for AudioNodes (only for HTMLMediaElements), so app.js's graph is
+        never re-routed and nothing throws "already bound".
+      - connectSpeakers:false → skips connectOutput() ONLY at construction (line ~305). toggleAnalyzer
+        NEVER touches connections — it only schedules _draw rAF — so the analyser chain stays alive
+        while silent. We still pass a ZERO-GAIN sink below as belt-and-braces: even if any code path
+        did connectAMA's output to ctx.destination, gain 0 = no echo / no double-audio.
+      - useCanvas:false → nothing painted; getFloatFrequencyData + updateEnergy run per frame inside
+        _draw(), so getEnergy("bass") returns live data. */
    ama=new AudioMotionAnalyzer({
+    audioCtx:G.ctx,
     source:G.master,
     connectSpeakers:false,
     useCanvas:false,
@@ -305,10 +337,12 @@ function amaBuild(){if(!SHBG)return;amaGlowMake(); /* glow first, analyzer secon
     minFreq:20,maxFreq:16000,
     smoothing:.7
    });
+   try{const sink=G.ctx.createGain();sink.gain.value=0;ama.connectOutput(sink);sink.connect(G.ctx.destination)}catch{}
+   console.info("[extras] AudioMotion analyzer attached to master");
   }
   if(amaGlow&&SHBG&&amaGlow.parentNode!==SHBG)SHBG.append(amaGlow); /* keep it LAST inside .lshower-bg → paints over mesh */
   if(!ama.isOn)ama.toggleAnalyzer(true);
- }catch(e){amaStop()}}
+ }catch(e){console.warn("[extras] AudioMotion build failed:",e&&e.message||e);amaKill()}} /* stop retrying a broken instance; kick-follower fallback keeps the cover reacting */
 function amaStop(){if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
 function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null}
 /* Feed AudioMotion's smoothed LOW band into the CSS vars (--bgLo/--bgMid/--bgHi). Called once per
