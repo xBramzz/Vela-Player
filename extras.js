@@ -121,6 +121,9 @@ const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("
 /* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
    any transformed/padded container (e.g. an older cached index.html), lift it out now. */
 try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
+/* same for the CLOSE button — it must be a DIRECT child of the root overlay so no ancestor with
+   transform/filter/overflow can clip it. Older cached markup left it inside other wrappers. */
+try{const CL=$("lshClose");if(CL&&SH&&CL.parentNode!==SH)SH.prepend(CL)}catch(e){}
 const fmtT=n=>Number.isFinite(n)&&n>=0?`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,"0")}`:"0:00";
 /* FIX 1: the cover used to be read ONLY from an <img> inside #cover. app.js paints a plain text
    "♫" glyph there whenever a track has no embedded artwork, so querySelector("img") returned null
