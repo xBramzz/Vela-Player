@@ -257,10 +257,22 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 <div class="lyredit" id="lyrEditBox" hidden><textarea id="lyrText" aria-label="Lyrics text" placeholder="Paste lyrics here. Lines with timestamps like [01:23.45] will follow the song."></textarea><div class="lyrtools"><button class="secondary" id="lyrSave"><i class="fa-solid fa-check" aria-hidden="true"></i>Save</button><button class="secondary" id="lyrCancel">Cancel</button></div></div>
 <!-- Apple-Music-style full-screen lyric shower (built by extras.js; kept in markup so it works even if innerHTML paths change) -->
 <div class="lshower" id="lshower" role="dialog" aria-modal="true" aria-label="Full-screen lyrics" hidden>
-<div class="lshower-bg" aria-hidden="true"><img id="lshArt" alt=""><div class="lshower-frost"></div></div>
+<div class="lshower-bg" aria-hidden="true"><img id="lshArt" alt=""><img id="lshArtB" alt=""><div class="lshower-frost"></div></div>
 <button class="lshower-close secondary icon" id="lshClose" title="Close (Esc)" aria-label="Close full-screen lyrics"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
-<div class="lshower-head"><span class="lshower-kicker">LYRICS</span><h2 id="lshTitle">—</h2><p id="lshArtist">—</p></div>
+<div class="lshower-grid">
+<main class="lshower-main">
+<div class="lsh-art"><img id="lshCover" alt=""></div>
+<h2 class="lsh-name" id="lshTitle">—</h2>
+<p class="lsh-sub" id="lshArtist">—</p>
+<div class="lsh-seek"><span id="lshCur">0:00</span><input class="range" id="lshSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek through track (lyrics view)"><span id="lshDur">0:00</span></div>
+<div class="lsh-ctrls">
+<button class="iconbtn" id="lshPrev" aria-label="Previous track" title="Previous (←)"><i class="fa-solid fa-backward-step" aria-hidden="true"></i></button>
+<button class="iconbtn primary" id="lshPlay" aria-label="Play" title="Play or pause (Space)"><svg viewBox="0 0 24 24" id="lshPlayIcon" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
+<button class="iconbtn" id="lshNext" aria-label="Next track" title="Next (→)"><i class="fa-solid fa-forward-step" aria-hidden="true"></i></button>
+</div>
+</main>
 <div class="lshower-body" id="lshBody" tabindex="0" aria-live="polite"></div>
+</div>
 <div class="lshower-foot"><span id="lshHint">Click a line to jump · ↑↓ to browse · L or Esc to close</span></div>
 </div>
 </section>

@@ -97,27 +97,61 @@ html.lite .lyrics{background:color-mix(in srgb,var(--blood-dk) 55%,black)}
 @media(max-width:420px){.rowacts .q{display:none}}
 
 /* ---------- Full-screen lyric shower (Apple Music style, glassmorphism) ---------- */
-.lshower{position:fixed;inset:0;z-index:90;display:grid;grid-template-rows:auto 1fr auto;isolation:isolate;color:#fff}
+.lshower{position:fixed;inset:0;width:100vw;height:100vh;z-index:90;display:flex;flex-direction:column;isolation:isolate;color:#fff;background:var(--pool2,#2a0308)}
 .lshower[hidden]{display:none}
 html:not(.lite) .lshower{animation:lshIn .42s var(--ease,cubic-bezier(.2,.8,.2,1))}
+html:not(.lite) .lshower.lsh-out{animation:lshOut .3s ease forwards}
 @keyframes lshIn{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:none}}
+@keyframes lshOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.985)}}
 .lshower-bg{position:absolute;inset:0;z-index:-1;overflow:hidden;background:var(--pool2,#2a0308)}
-.lshower-bg img{position:absolute;inset:-12%;width:124%;height:124%;object-fit:cover;filter:blur(70px) saturate(1.5) brightness(.6);transform:scale(1.1);transition:opacity .5s}
-html:not(.lite) .lshower-bg img{animation:lshDrift 26s ease-in-out infinite alternate}
+/* two stacked copies of the cover so a track change CROSSFADES instead of popping */
+.lshower-bg img{position:absolute;inset:-12%;width:124%;height:124%;object-fit:cover;filter:blur(80px) saturate(1.4) brightness(.6);transform:scale(1.1);opacity:0;transition:opacity .7s ease}
+.lshower-bg img.lsh-vis{opacity:1}
+html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infinite alternate}
 @keyframes lshDrift{from{transform:scale(1.1) translate(-1.5%,1%)}to{transform:scale(1.22) translate(1.5%,-1%)}}
 .lshower-frost{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,3,6,.5),rgba(8,3,6,.78)),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 22%,transparent),transparent 60%)}
 .lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px}
 .lshower-close:hover{background:rgba(255,255,255,.2)!important;transform:scale(1.06)}
-.lshower-head{text-align:center;padding:clamp(26px,6vh,58px) 20px 8px;text-shadow:0 2px 22px rgba(0,0,0,.55)}
-.lshower-kicker{display:block;font:600 11px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-bottom:8px}
-.lshower-head h2{margin:0;font:600 clamp(22px,3.4vw,34px)/1.15 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:min(72ch,92vw);margin-inline:auto}
-.lshower-head p{margin:4px 0 0;font:500 15px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lshower-body{position:relative;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:34vh 24px 34vh;text-align:center}
-.lshower-body::-webkit-scrollbar{display:none}
-.lshower-body>.lyr{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,4.6vw,52px);line-height:1.28;letter-spacing:-.022em;margin:0 auto;padding:10px 14px;max-width:min(22ch + 40%,24em);color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
+/* REMOVED (old centred modal head): .lshower-head / .lshower-kicker / .lshower-head h2 / .lshower-head p — replaced by the two-column layout below */
+/* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
+.lshower-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:clamp(18px,4vw,56px);align-items:center;padding:clamp(18px,4vh,48px) clamp(20px,4vw,64px) 0}
+.lshower-main{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;text-align:center;text-shadow:0 2px 22px rgba(0,0,0,.55)}
+.lsh-art{width:min(38vw,44vh,440px);aspect-ratio:1;border-radius:18px;overflow:hidden;background:repeating-radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blood-dk) 80%,black) 0 3px,color-mix(in srgb,var(--pool2) 80%,black) 3px 5px),var(--pool2);box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--blood) 45%,transparent),0 0 0 1px rgba(255,255,255,.08)}
+.lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
+html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ease,cubic-bezier(.2,.8,.2,1)) both}
+@keyframes lshArtIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
+.lsh-name{margin:6px 0 0;max-width:100%;font:700 clamp(20px,2.6vw,34px)/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lsh-sub{margin:2px 0 0;max-width:100%;font:500 clamp(14px,1.4vw,18px)/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lsh-seek{display:flex;align-items:center;gap:10px;width:min(100%,420px);margin-top:8px}
+.lsh-seek span{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums;min-width:38px}
+.lsh-seek #lshCur{text-align:right}
+.lsh-seek input.range{flex:1;margin:0}
+.lsh-ctrls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:6px}
+.lsh-ctrls .iconbtn{width:44px;height:44px;border-color:rgba(255,255,255,.18)!important;background:rgba(255,255,255,.08)!important;color:#fff!important;box-shadow:none!important;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.lsh-ctrls .iconbtn svg{width:20px;height:20px;fill:currentColor}
+.lsh-ctrls .iconbtn.primary{width:56px;height:56px;background:color-mix(in srgb,var(--blood) 72%,black)!important;border-color:color-mix(in srgb,var(--blood-hi) 55%,transparent)!important;box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 80%,black)!important}
+.lsh-ctrls .iconbtn:hover{background:rgba(255,255,255,.16)!important}
+.lsh-ctrls .iconbtn.primary:hover{background:color-mix(in srgb,var(--blood-hi) 60%,black)!important}
+/* narrow screens / portrait: stack — small cover + title/artist on top, lyrics below */
+@media(max-width:860px),(orientation:portrait) and (max-height:640px){
+ .lshower-grid{grid-template-columns:minmax(0,1fr);align-content:start;gap:14px;padding:clamp(54px,9vh,74px) 18px 0}
+ .lsh-art{width:min(34vw,150px)}
+ .lsh-name{font-size:clamp(17px,4.6vw,22px)}
+ .lsh-sub{font-size:13px}
+ .lsh-ctrls{display:none}
+ .lsh-seek{margin-top:2px}
+}
+.lshower-body{position:relative;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:28% 24px 60%;text-align:left}
+.lshower-body::-webkit-scrollbar{display:none;width:0;height:0}
+.lshower-body>.lyr{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,3.4vw,52px);line-height:1.32;letter-spacing:-.022em;margin:0;padding:10px 14px;max-width:100%;color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
 .lshower-body>.lyr.gap{min-height:1.4em;pointer-events:none}
 .lshower-body>.lyr:hover{color:rgba(255,255,255,.55);filter:blur(.4px)}
 .lshower-body>.lyr.on{color:#fff;filter:none;opacity:1;transform:none;text-shadow:0 4px 34px color-mix(in srgb,var(--blood-hi,#ff3b47) 55%,rgba(0,0,0,.6))}
+/* depth cue: the farther from the active line, the stronger the blur/fade */
+.lshower-body>.lyr.pn1{filter:blur(2.2px);opacity:.5}
+.lshower-body>.lyr.pn2{filter:blur(4px);opacity:.38}
+.lshower-body>.lyr.pn3{filter:blur(6px);opacity:.28}
+.lshower-body>.lyr.pnf{filter:blur(8px);opacity:.2}
 /* ---- performance: freeze the page behind the shower ----
    The overlay is fully opaque (frost layer), so every animated background element below it
    is wasted GPU work. While .lyrshow-open is set we display:none the heavy layers (no paint,
@@ -151,3 +185,6 @@ html:not(.lite) .lshower-body>.lyr.on::before{content:"";position:absolute;left:
 @media(prefers-reduced-motion:reduce){.lshower,.lshower-bg img{animation:none}.lshower-body>.lyr{transition:color .2s;filter:none;transform:none;opacity:1}.lshower-body>.lyr.on{font-weight:800}}
 html.lite .lshower-bg img{filter:blur(40px) saturate(1.3) brightness(.55);animation:none}
 html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
+/* crossfade layers must stay stacked; lite/reduced-motion keep them visible via opacity only */
+html.lite .lshower-bg img.lsh-vis,html.lite .lshower-bg img{animation:none}
+@media(prefers-reduced-motion:reduce){.lshower-body>.lyr.pn1,.lshower-body>.lyr.pn2,.lshower-body>.lyr.pn3,.lshower-body>.lyr.pnf{filter:none;opacity:.85}.lsh-art{animation:none!important}}
