@@ -118,6 +118,18 @@ load=function(){origLoad();shSync();
  }};
 /* ---------- full-screen lyric shower (Apple Music style) ---------- */
 const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("lshCover");let shIdx=-1,shHold=0,shPrev=null,shBgTop=true,shSeeking=false;
+/* word-level "progress" for the active line — Apple-Music-style smooth scroll FAKE.
+   Our LRC data only has one timestamp per LINE, so we interpolate inside the line: progress p
+   runs 0→1 from lines[i].t to lines[i+1].t (last line: capped window), which drives a left-to-
+   right bright gradient on the line AND a continuous scrollTop glide from that line's start to
+   its end — the "scrolls from the beginning of a line to the end, then into the next line" feel.
+   rAF-driven (timeupdate fires only ~4×/s — far too coarse for smooth motion). */
+let shW=0,shLastT=0,shLastMs=0,shWordRaf=0,shWasPlaying=false,shFillEl=null;
+try{shFillEl=new CSSStyleSheet();shFillEl.replaceSync(":root{--lshFill:0%}")}catch(e){shFillEl=null}
+const shReduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* fill % → inline style on #lshBody (always works) + adopted/fast stylesheet (cheaper repaint) */
+function shPublishFill(pv){const v=pv.toFixed(2)+"%";if(SHB)SHB.style.setProperty("--lshFill",v);
+ if(shFillEl&&document.adoptedStyleSheets&&document.adoptedStyleSheets.indexOf(shFillEl)>=0){try{shFillEl.cssRules[0].style.setProperty("--lshFill",v)}catch(e){}}}
 /* FIX (ReferenceError: shMeta is not defined): the old big title/artist meta block that sat ABOVE
    the progress bar was removed when the left column was rebuilt. Its updater function (shMeta) and
    its elements went with it — but two call sites still called shMeta(), so pressing L threw before
@@ -145,16 +157,43 @@ const shNoArt="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' view
    (same-origin blob, always readable) → themed placeholder. */
 function shCoverSrc(){try{const c=$("cover");const im=c&&c.querySelector("img");if(im&&im.src)return im.src;if(a&&a.src&&/^blob:/.test(a.src))return a.src}catch(e){}return shNoArt}
 function shDepth(){if(lite||!synced)return;const ch=SHB.children;for(let k=0;k<ch.length;k++){const c=ch[k];c.classList.remove("pn1","pn2","pn3","pnf");if(k===shIdx||c.classList.contains("on"))continue;const d=Math.abs(k-shIdx);c.classList.add(d<=1?"pn1":d===2?"pn2":d===3?"pn3":"pnf")}}
-function shRender(){SHB.replaceChildren();shIdx=-1;
+function shRender(){SHB.replaceChildren();shIdx=-1;shW=0;shPublishFill(0); /* fresh lines: reset the fill so old % can't flash on line 0 */
  if(!lines.length){const e=document.createElement("div");e.className="lshower-empty";const i0=document.createElement("i");i0.className="fa-solid fa-microphone-lines";const p0=document.createElement("p");p0.textContent="No lyrics for this track yet.";const s0=document.createElement("span");s0.textContent="Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";e.append(i0,p0,s0);SHB.append(e);return}
  const f=document.createDocumentFragment();
  lines.forEach((l,i)=>{const p=document.createElement("p");p.className="lyr"+(synced?" syn":"")+(l.s?"":" gap");p.textContent=l.s||"";if(synced)p.dataset.i=i;f.append(p)});
- SHB.append(f);shTick(true)}
-function shScrollTo(el){if(!el)return;SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/3),behavior:(lite||document.documentElement.dataset.shInit==="0")?"auto":"smooth"})}
+ SHB.append(f);shTick(true);shStart()}
+/* target scrollTop for line i at intra-line progress p (0..1): a CONTINUOUS function of time —
+   start anchored so the line's top sits at ~28% of the viewport (Apple centring-ish), end = that
+   plus the line's own height → the text glides from the beginning of the line to its end and then
+   into the next one. No scrollTo({behavior:"smooth"}) anywhere in this path: the browser's smooth
+   scroll fights per-frame writes (and can even cancel them), so we write scrollTop directly and
+   let the frame rate do the smoothing. */
+function shTargetTop(i,p){if(i<0||!SHB)return null;const el=SHB.children[i];if(!el)return null;
+ const base=Math.max(0,el.offsetTop-SHB.clientHeight*.28);return Math.max(0,base+p*el.offsetHeight)}
+function shScrollTo(el){if(!el||!SHB)return;SHB.scrollTo({top:Math.max(0,el.offsetTop-SHB.clientHeight/3),behavior:(lite||shReduced||document.documentElement.dataset.shInit==="0")?"auto":"instant"})}
+/* --- word-progress interpolation + smooth-scroll engine (rAF, only while the shower is open) --- */
+function shFillOf(i,t){if(i<0)return 0;const s=lines[i]?lines[i].t:t,e=(i+1<lines.length)?lines[i+1].t:s+4;
+ return Math.min(1,Math.max(0,(t-s)/Math.max(.3,e-s)))}
+function shWUpdate(){/* currentTime drifts vs wall-clock while paused/throttled — re-anchor on any jump */
+ if(Math.abs(a.currentTime-shLastT)>.35){shLastT=a.currentTime;shLastMs=performance.now();shWasPlaying=!a.paused}
+ else if(shWasPlaying&&!a.paused)shLastMs+=Math.min(64,performance.now()-shLastMs);
+ shLastT=a.currentTime;shW=shFillOf(shIdx,shLastT)}
+function shFrame(){if(!SH||SH.hidden||!synced||!lines.length){shWordRaf=0;return}
+ shWUpdate();const pv=shW*100;shPublishFill(pv);
+ const tt=shTargetTop(shIdx,shW);
+ if(tt!=null&&Date.now()>shHold&&!shSeeking&&document.documentElement.dataset.shInit==="1"){
+  const cur=SHB.scrollTop,d=tt-cur;
+  if(d>.3)SHB.scrollTop=cur+d*(lite||shReduced?1:.14); /* lite/reduced: snap; else exponential glide */
+  else if(d<-.3)SHB.scrollTop=tt} /* backwards (seek up / line change): jump, never crawl */
+ shWordRaf=requestAnimationFrame(shFrame)}
+function shStart(){if(shWordRaf||!SH||SH.hidden)return;shLastT=a.currentTime;shLastMs=performance.now();shWasPlaying=!a.paused;shWordRaf=requestAnimationFrame(shFrame)}
+function shStop(){if(shWordRaf)cancelAnimationFrame(shWordRaf);shWordRaf=0}
 function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.currentTime+.25;let i=-1;for(let k=0;k<lines.length;k++){if(lines[k].t<=t)i=k;else break}
- if(i===shIdx&&!force)return;if(!SHB.children[shIdx]?.classList.contains("on"))shProgress(); /* lyric-jump / arrow-key seeks: fill must follow instantly */
- SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(el)el.classList.add("on");shDepth();
- if(Date.now()>shHold)shScrollTo(el)}
+ if(i!==shIdx||force){
+  if(!SHB.children[shIdx]?.classList.contains("on"))shProgress(); /* lyric-jump / arrow-key seeks: fill must follow instantly */
+  SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(el)el.classList.add("on");shDepth()}
+ shW=shFillOf(i,a.currentTime);shPublishFill(shW*100); /* keep the gradient exact even when paused or throttled */
+ if((i!==shIdx-1&&i!==shIdx)||force)shStart()} /* ensure the rAF engine is running whenever lines move */
 /* ---------- Apple-Music-style MOVING MESH BACKGROUND (full-screen lyric shower) ----------
    5 dominant colours sampled from the current cover → huge blurred blobs drifting on their own
    lissajous paths, pulsing with the LOW band of the track. Only transform/opacity are animated;
@@ -495,12 +534,15 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
      keep the fixed-position overlay (it already covers the whole viewport). */
   try{const p=(document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen());if(p&&p.catch)p.catch(()=>{})}catch{}
   document.documentElement.dataset.shInit="0";
-  setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose")?.focus()},60)}
+  setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose")?.focus();shStart();
+  /* one-time: adopt the fast --lshFill stylesheet (see shPublishFill / extras.css). Delayed so a
+     rejected/unsupported adoptedStyleSheets write can NEVER interrupt opening the overlay. */
+  try{if(shFillEl&&document.adoptedStyleSheets&&document.adoptedStyleSheets.indexOf(shFillEl)<0){document.adoptedStyleSheets=[...document.adoptedStyleSheets,shFillEl]}}catch(e){}},60)}
  else{if(SH.hidden)return;shFsOff();
   /* close: fade out ONLY the root overlay element with one opacity transition — no child of the
      overlay gets its style touched (the old code put .lsh-out on SH itself and also relied on a
      keyframe animation; both could leave the left column stuck at opacity 0). */
-  if(!lite){R.classList.add("lsh-out");setTimeout(()=>{R.classList.remove("lsh-out");SH.hidden=true;meshStop()},320)}else{SH.hidden=true;meshStop()}
+  if(!lite){R.classList.add("lsh-out");setTimeout(()=>{R.classList.remove("lsh-out");SH.hidden=true;meshStop();shStop()},320)}else{SH.hidden=true;meshStop();shStop()}
   document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}

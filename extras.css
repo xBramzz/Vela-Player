@@ -366,6 +366,27 @@ body.lyrshow-open{padding:0!important;margin:0!important}
 html:not(.lite) .lshower-body>.lyr.on{animation:lshSweep 1.4s var(--ease,cubic-bezier(.2,.8,.2,1)) .1s both}
 html:not(.lite) .lshower-body>.lyr.on::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(105deg,transparent calc(var(--sweep) - 26%),rgba(255,255,255,.16) var(--sweep),transparent calc(var(--sweep) + 26%));mix-blend-mode:screen}
 html:not(.lite) .lshower-body>.lyr{position:relative}
+/* ---- FAKE WORD-BY-WORD HIGHLIGHT (Apple Music style) ----
+   Our lyric data only has ONE timestamp per line, so extras.js interpolates progress inside the
+   line (current line's start → next line's start) and writes it as --lshFill (a <percentage>,
+   registered below so it can be transitioned) on #lshBody every rAF frame while the shower is
+   open. The active line then paints a two-tone text gradient: full white up to the fill point,
+   dimmed after it — reading like words light up one by one. Same gradient also feeds a soft glow
+   copy of the line behind it (::before). Only the ACTIVE line uses it; inactive lines keep their
+   plain colours. Inherited custom properties don't animate themselves, so we add a short linear
+   transition on --lshFill scoped to .on — if JS ever stops updating it, the value simply rests. */
+@property --lshFill{syntax:'<percentage>';inherits:true;initial-value:0%}
+.lshower-body{--lshFill:0%;transition:--lshFill .12s linear} /* smooths the % between rAF frames */
+.lshower-body>.lyr.on{background-image:linear-gradient(90deg,#fff 0%,#fff var(--lshFill),rgba(255,255,255,.38) var(--lshFill),rgba(255,255,255,.38) 100%);background-repeat:no-repeat;-webkit-background-clip:text;background-clip:text;color:transparent}
+.lshower-body>.lyr.on::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;background-image:linear-gradient(90deg,rgba(255,255,255,.55) 0%,rgba(255,255,255,.55) var(--lshFill),transparent var(--lshFill),transparent 100%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;filter:blur(14px)}
+/* fallback for engines without background-clip:text support: plain white active line (no split) */
+@supports not ((-webkit-background-clip:text) or (background-clip:text)){.lshower-body>.lyr.on{background-image:none!important;color:#fff}.lshower-body>.lyr.on::before{display:none}}
+/* reduced motion / lite: no fake-word animation at all — static bright active line (matches the
+   existing "no flourish" policy there) and no property transition on the scroll container */
+@media(prefers-reduced-motion:reduce){.lshower-body{transition:none}.lshower-body>.lyr.on{background-image:none!important;color:#fff}.lshower-body>.lyr.on::before{display:none}}
+html.lite .lshower-body{transition:none}
+html.lite .lshower-body>.lyr.on{background-image:none!important;color:#fff}
+html.lite .lshower-body>.lyr.on::before{display:none}
 /* fade the top & bottom of the scroll area like Apple Music's mask */
 .lshower-body{-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 14%,#000 86%,transparent 100%)}
 .lshower-foot{position:absolute;left:0;right:0;bottom:0;z-index:1;text-align:center;padding:10px 20px max(14px,env(safe-area-inset-bottom));pointer-events:none}
