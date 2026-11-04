@@ -243,7 +243,8 @@ function shBassStep(t){
   shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
  if(mesh)mesh.style.setProperty("--bg-bass",shOut.toFixed(3)); /* ONE variable, on the pulse wrapper */
  amaGlowStep(t)} /* bass-reactive background glow (AudioMotion LOW band, shOut fallback) */
-function shBassStart(){if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
+function shBassStart(){amaGlowMake();if(amaGlow&&SHBG&&amaGlow.parentNode===SHBG)SHBG.append(amaGlow); /* glow always LAST inside .lshower-bg → above mesh, below content */
+ if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
 function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass");amaStop()}
 /* ================= AUDIOMOTION BASS GLOW (optional, extras-only) =================
    audiomotion-analyzer renders NO numbers itself — the readout at the bottom was our own
@@ -364,6 +365,11 @@ function amaGlowTint(){if(!amaGlow||!mesh)return;const bl=mesh.querySelectorAll(
 function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;const wrap=n.parentNode; /* .bg-pulse */
  if(reduceMotion||lite){if(o)o.remove()}else{wrap.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
  SHBG.prepend(wrap);
+ /* FIX (glow vanished after track change): the mesh wrapper is PREPENDED inside .lshower-bg while
+    amaGlowMake/amaBuild APPEND the glow at the end. If the glow ever loses that race it sits BELOW
+    the opaque base cover img and disappears. Belt & braces: pin explicit z-tiers so DOM order can
+    never bury it — pulse layer 0, analyzer canvas 0, glow 1 (still under .lshower-grid content). */
+ if(amaGlow)amaGlow.style.zIndex="1";if(amaCanvas)amaCanvas.style.zIndex="0";wrap.style.zIndex="0";
  mesh=n; /* --bg-bass AND --lshBass are published on the .lsh-mesh node (inherits to .bg-pulse/.lsh-spin) */
  amaGlowTint(); /* glow follows the new cover colours too */
  if(reduceMotion||lite){meshStop();shBassStart();return} /* static blobs — but the pulse still runs */
@@ -511,4 +517,5 @@ load();
 })();
 /* DEBUG-ONLY probe: window.DetuneAMA.bass() → current LOW-band value driving the glow.
    kill() is hoisted so it's always defined, even if this line somehow runs before amaKill. */
-window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo};
+window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo,
+ state:()=>({amaLive:!!(ama&&ama.isOn),lo:+amaLast.lo.toFixed(3),kick:+shOut.toFixed(3),wired:!!shAnalyser,glow:!!amaGlow,graph:!!(window.DetuneApp&&DetuneApp.audioGraph)})};
