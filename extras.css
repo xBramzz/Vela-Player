@@ -221,9 +221,15 @@ body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!import
 .lshower .lshower-main,.lshower .lshower-body{position:relative;z-index:2;opacity:1!important;visibility:visible!important;transform:none!important;pointer-events:auto!important;filter:none!important}
 .lshower .lshower-main{display:flex!important}
 .lshower .lshower-body{display:block!important}
-/* same guarantee for every element inside the left column (cover, title, artist, progress bar,
-   prev / play-pause / next) so no stray rule anywhere in the app can fade it out again */
-.lshower .lshower-main *{opacity:1!important;visibility:visible!important;transform:none!important}
+/* Left-column guarantee, v3. WHY THREE STEPS: the original blanket `.lshower .lshower-main *`
+   matched EVERY descendant of .lshower (the background layers live inside .lshower too) and froze
+   opacity/transform on the bass glow + mesh. v2 scoped it but dropped !important → app-wide rules
+   won again. v2.5 re-added !important but also pinned .lsh-ctrls>* / .lsh-vol>* — that froze the
+   button SVGs' dimmed opacity and the .lsh-dot/.lsh-one state indicators. Final form: pin only the
+   column blocks + their DIRECT children; per-control state rules (icons, dots, badges, hover
+   transforms) work freely again. */
+.lshower .lshower-main,.lshower .lsh-art,.lshower .lsh-name,.lshower .lsh-sub,.lshower .lsh-seek,.lshower .lsh-times,.lshower .lsh-ctrls,.lshower .lsh-vol{opacity:1!important;visibility:visible!important}
+.lshower .lshower-main>*{opacity:1!important;visibility:visible!important} /* direct children only — never the overlay background */
 .lsh-art{width:min(38vw,44vh,440px);max-width:100%;aspect-ratio:1/1;height:min(38vw,44vh,440px);border-radius:12px;overflow:hidden;background:var(--pool2,#141014);box-shadow:0 18px 50px rgba(0,0,0,.5),0 4px 14px rgba(0,0,0,.35)} /* rounded ~12px + SOFT neutral drop shadow only — no red halo */
 @supports(aspect-ratio:1/1){.lsh-art{height:auto}}
 .lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
@@ -384,5 +390,9 @@ html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
    radial pulses with the bass (scale + opacity + brightness); mesh colours bleed through at
    the edges. Sits above the blurred cover + mesh inside .lshower-bg, BELOW .lshower-grid. */
 .lsh-bassglow{--bgLo:0;--bgMid:0;--bgHi:0;--bgc1:255 140 90;--bgc2:180 60 120;--bgc3:70 40 90;--bgcN:140 120 110;position:absolute;inset:-10%;z-index:1;pointer-events:none;will-change:transform,opacity,filter;transform:scale(calc(1+var(--bgLo)*.12)) translateZ(0);opacity:calc(.12 + var(--bgLo)*.5 + var(--bgMid)*.08);background:radial-gradient(60% 55% at 50% 52%,rgb(var(--bgc1)/.9) 0%,rgb(var(--bgc2)/.55) 38%,rgb(var(--bgc3)/.22) 62%,transparent 78%),radial-gradient(45% 40% at 50% 50%,rgba(255 255 255/.16),transparent 70%);mix-blend-mode:screen;filter:blur(30px) saturate(calc(1.1 + var(--bgLo)*.5)) brightness(calc(.9 + var(--bgLo)*.5 + var(--bgHi)*.12))}
+/* FIX (invisible glow): .lshower-bg img had NO z-index and the mesh wrapper (.bg-pulse) is
+   PREPENDED — DOM order alone kept it on top. Pin explicit tiers so the glow can never be buried
+   by the base cover <img> or a rebuilt pulse layer, regardless of insertion order. */
+.lshower-bg img,.lshower-frost{z-index:0}
 @media(prefers-reduced-motion:reduce){.lsh-bassglow{transform:none;opacity:calc(.18 + var(--bgLo)*.16)}}
 .lite .lsh-bassglow{opacity:calc(.1 + var(--bgLo)*.2)}
