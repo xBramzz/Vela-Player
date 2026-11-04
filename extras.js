@@ -241,11 +241,32 @@ function shBassStep(t){
   const dyn=Math.min(1,Math.max(0,(x-shAvg*boost)/(.10*boost))); /* the KICK component only */
   const k=Math.min(1,Math.max(0,dyn*.92+x*.08));
   shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
- if(mesh)mesh.style.setProperty("--bg-bass",shOut.toFixed(3)); /* ONE variable, on the pulse wrapper */
- amaGlowStep(t)} /* bass-reactive background glow (AudioMotion LOW band, shOut fallback) */
+ if(mesh){mesh.style.setProperty("--bg-bass",shOut.toFixed(3));/* one variable, inherited by .bg-pulse/.lsh-mesh/.lsh-spin */
+  const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--bg-bass",shOut.toFixed(3))} /* ALSO set directly on .lsh-spin: reduced-motion/lite CSS pins transform:none on its ANCESTORS (.lsh-mesh-out crossfade), which would otherwise clip the subtree and freeze an inherited var */
+ amaGlowStep(t);coverBassStep(t)} /* glow + blurred-cover bass reaction */
 function shBassStart(){amaGlowMake();if(amaGlow&&SHBG&&amaGlow.parentNode===SHBG)SHBG.append(amaGlow); /* glow always LAST inside .lshower-bg → above mesh, below content */
  if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
-function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass");amaStop()}
+function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
+ if(mesh){mesh.style.removeProperty("--bg-bass");const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.removeProperty("--bg-bass")}
+ /* reset BOTH blurred-cover <img>s (#lshArt/#lshArtB) so a stale inline --bg-bass can't linger */
+ for(const im of[SHA,SHB2]){if(im)im.style.removeProperty("--bg-bass")}
+ amaStop()}
+/* ================= BLURRED COVER BASS REACTION (the user asked for THIS one) =================
+   The background of the lyrics overlay IS these two <img>s (.lshower-bg img → #lshArt/#lshArtB).
+   They consume ONE variable — --bg-bass (extras.css): brightness .7→.86, saturate 1.35→1.6,
+   scale 1.6→1.645 on every kick. This writes it DIRECTLY onto the visible image element itself
+   (not just the mesh wrapper), so nothing in between (crossfade wrappers, reduced-motion rules
+   pinning ancestor transforms, z-tier reshuffles) can ever intercept or freeze it. Source value:
+   AudioMotion's LOW band when the analyzer is live, our own kick follower (shOut) otherwise. */
+let covLo=0;
+function coverBassStep(t){
+ const vis=(v)=>{if(!v)return;let b=covLo;if(v===SHA&&SHB2&&SHB2.classList.contains("lsh-vis"))b=Math.max(covLo,shOut);v.style.setProperty("--bg-bass",b.toFixed(3))};
+ let lo=-1;
+ try{if(ama&&ama.isOn&&!ama.isDestroyed)lo=ama.getEnergy("bass")}catch{lo=-1}
+ if(!(lo>=0)){covLo+=(Math.min(1,shOut*1.15)-covLo)*(shOut>covLo?.5:.12);vis(SHA);vis(SHB2);return}
+ const dt=Math.min(.1,Math.max(0,(t-amaLast.t)/1000)); /* amaLast.t already updated by amaGlowStep this frame */
+ covLo+=(Math.min(1,lo)-covLo)*(lo>covLo?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.3)));
+ vis(SHA);vis(SHB2)}
 /* ================= AUDIOMOTION BASS GLOW (optional, extras-only) =================
    audiomotion-analyzer renders NO numbers itself — the readout at the bottom was our own
    debug div ("bass 0.42 · avg 0.11"), now removed (see shBassStep / the old lsh-bassdbg IIFE).
@@ -419,7 +440,7 @@ function shMeta(){const t=hasTrack()?$("title")?.textContent||"":"";const ar=has
 function shArt(v){const cov=$("cover"),img=cov&&cov.querySelector("img"),src=(img&&img.src)||shCoverSrc();
  if(!SHA||!SHB2)return; /* left column art nodes missing (cached/old markup): skip, never throw */
  const top=v?SHA:SHB2,bot=v?SHB2:SHA; /* two stacked copies of the blurred cover CROSSFADE (~1s CSS transition) on track change */
- if(top.getAttribute("src")!==src)top.src=src;top.classList.add("lsh-vis");top.classList.remove("lsh-gone");
+ if(top.getAttribute("src")!==src)top.src=src;top.classList.add("lsh-vis");top.classList.remove("lsh-gone");top.style.setProperty("--bg-bass","0"); /* fresh element inline value so coverBassStep drives THIS img from frame 1 */
  bot.classList.remove("lsh-vis");bot.classList.add("lsh-gone");shBgTop=v;
  if(SHC){if(src){SHC.src=src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}
  /* moving mesh background: rebuild (with ~1s crossfade) whenever the cover changes */
@@ -521,5 +542,5 @@ load();
 })();
 /* DEBUG-ONLY probe: window.DetuneAMA.bass() → current LOW-band value driving the glow.
    kill() is hoisted so it's always defined, even if this line somehow runs before amaKill. */
-window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo,
+window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo,cover:()=>({art:SHA?getComputedStyle(SHA).getPropertyValue("--bg-bass"):"-",artB:SHB2?getComputedStyle(SHB2).getPropertyValue("--bg-bass"):"-",covLo:+covLo.toFixed(3)}),
  state:()=>({amaLive:!!(ama&&ama.isOn),lo:+amaLast.lo.toFixed(3),kick:+shOut.toFixed(3),wired:!!shAnalyser,glow:!!amaGlow,graph:!!(window.DetuneApp&&DetuneApp.audioGraph)})};
