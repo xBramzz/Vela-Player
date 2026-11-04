@@ -118,6 +118,8 @@ load=function(){origLoad();shSync();
  }};
 /* ---------- full-screen lyric shower (Apple Music style) ---------- */
 const SH=$("lshower"),SHB=$("lshBody"),SHA=$("lshArt"),SHB2=$("lshArtB"),SHC=$("lshCover");let shIdx=-1,shHold=0,shPrev=null,shBgTop=true,shSeeking=false;
+/* artist strings use "/" as the separator ("YNW Melly/YNW BSlime/Jit4 Stan") — display it as ", " */
+const shArtist=t=>String(t==null?"":t).replace(/\//g,", ").trim();
 /* FIX 1: the shower must be a direct child of <body>. If it's still nested inside #lyrics or
    any transformed/padded container (e.g. an older cached index.html), lift it out now. */
 try{if(SH&&SH.parentNode!==document.body)document.body.appendChild(SH)}catch(e){}
@@ -150,6 +152,95 @@ function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.cur
    the left column or the lyrics. Respects prefers-reduced-motion (static blobs, no pulse). */
 const reduceMotion=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
+/* ================= OWN BASS ANALYSER (priority 1) =================
+   WHY THE OLD VERSION NEVER PULSED — three independent killers, all found in the code:
+   1. DetuneFX.freeze is set to true for the WHOLE time the shower is open (shOpen), and fx.js's
+      tick() returns at the top while frozen — so fx.js never published --bass/--mid/--treb/--beat
+      while the overlay was up. The old meshLow() read FX.analyser NODES directly, which still
+      worked, but any style that depended on the published --bass variable was dead by design.
+   2. The pulse was applied to .lsh-spin — the very element whose rotation ANGLE is written by JS.
+      In reduced-motion/lite mode CSS instead runs `animation:lshSpin 60s linear infinite` ON THAT
+      SAME ELEMENT, and a CSS animation on transform overrides any inline scale → invisible pulse.
+   3. On deck A the analyser hangs off `compressor` (BEFORE master volume/mute); deck B's tap
+      (captureStream) is silent when paused, so during a crossfade its bins decayed to ~0.
+   FIX: the overlay now owns its own analyser and its own rAF loop (below). It REUSES the app's
+   existing AudioContext + graph (window.DetuneApp.audioGraph, published by app.js) and attaches to
+   the FINAL master output (master → ctx.destination, i.e. AFTER EQ/compressor/reverb/volume), plus
+   deck B's real media-stream tap while a crossfade runs. NO createMediaElementSource call happens
+   here — that API can only ever be called once per element (app.js already owns #audio) and it also
+   re-routes the element into the graph, which would have silenced the speakers. An AnalyserNode is a
+   pure probe: connecting master→analyser adds no audible path (analysers don't auto-connect to the
+   destination), so the audio chain to the speakers is untouched. */
+const shAn=window.DetuneApp&&DetuneApp.audioGraph&&DetuneApp.audioGraph.analyser; /* reuse app.js's post-master probe if present */
+let shCtx=null,shAnalyser=null,shBuf=null,shSrcList=[],shWired=false,shWiredAt=0,shRun=false,shRaf=0,shResumeBound=false;
+function shWire(){
+ const G=window.DetuneApp&&DetuneApp.audioGraph;const AC=window.AudioContext||window.webkitAudioContext;
+ if(!G||!G.ctx||!AC)return false;
+ try{
+  if(shCtx!==G.ctx){ /* context replaced (teardown / retry): rebuild our probe from scratch */
+   for(const n of shSrcList){try{n.disconnect()}catch{}}shSrcList=[];shAnalyser=null;shXtap=null;shXsrc=null}
+  shCtx=G.ctx;
+  if(!shAnalyser){
+   if(shAn&&shAn.context===shCtx){shAnalyser=shAn} /* same context → reuse, zero new nodes */
+   else{shAnalyser=shCtx.createAnalyser();shAnalyser.fftSize=2048;shAnalyser.smoothingTimeConstant=.6;
+    /* FINAL master output → our analyser (and nothing else). master stays connected to
+       ctx.destination exactly as before, so the speakers are unaffected. */
+    try{G.master.connect(shAnalyser)}catch{}
+    try{if(G.wet&&G.wet!==G.master)G.wet.connect(shAnalyser)}catch{}}}
+  if(!shWired||performance.now()-shWiredAt>1500){ /* deck B is NOT bound via createMediaElementSource
+     (see app.js bindDeckB) — captureStream() gives us its real, audible signal during a crossfade.
+     Re-acquired after ~1.5 s so a track change that restarts deck B's stream doesn't leave a dead tap. */
+   shWired=true;shWiredAt=performance.now();
+   try{for(const n of shSrcList){try{n.disconnect()}catch{}}shSrcList=[shAnalyser]}catch{}
+   const el=[$("audio"),$("audioB")];
+   for(const e0 of el){if(!e0||typeof e0.captureStream!=="function")continue;
+    try{const src=shCtx.createMediaStreamSource(e0.captureStream());src.connect(shAnalyser);shSrcList.push(src)}catch{}}
+   try{const b=G.bAnalyser;if(b&&b!==shAnalyser)b.connect(shAnalyser)}catch{}}
+  return !!shAnalyser}catch(e){return false}}
+/* suspended context (autoplay policy) → resume on ANY user interaction; playback itself also resumes it */
+if(!shResumeBound){shResumeBound=true;
+ for(const ev of["pointerdown","keydown","touchstart","click"])document.addEventListener(ev,()=>{try{const G=window.DetuneApp&&DetuneApp.audioGraph;const c=G&&G.ctx;if(c&&c.state==="suspended")c.resume().catch(()=>{})}catch{}},{passive:true})}
+/* one raw low-band reading (≈20–120 Hz) averaged over every source currently feeding our analyser */
+function shRawLow(){
+ if(!shAnalyser)return -1;
+ const n=shAnalyser.frequencyBinCount;
+ if(!shBuf||shBuf.length!==n)shBuf=new Uint8Array(n);
+ const hz=shAnalyser.context.sampleRate/shAnalyser.fftSize;
+ let lo=Math.max(1,(20/hz)|0),hi=Math.min(n-1,Math.ceil(120/hz));if(hi<=lo)hi=lo+1;
+ let best=-1,got=false;
+ for(const src of shSrcList){if(!src)continue; /* [shAnalyser, ...stream sources] */
+  try{src.getByteFrequencyData(shBuf)}catch{continue}
+  let s=0,c=0;for(let i=lo;i<=hi;i++){s+=shBuf[i];c++}
+  const v=c?s/c/255:0;if(v>best)best=v;got=true}
+ return got?best:-1}
+/* KICK FOLLOWER (not loudness): keep a running average of the bass band over ~1 s and pulse on how
+   much the CURRENT level sits ABOVE that baseline. A sustained 808 raises the baseline with it (no
+   permanent glow); a kick transient spikes against it. Smoothing: attack ≈50 ms, release ≈350 ms
+   (one-pole time constants evaluated per frame). */
+let shAvg=0,shOut=0,shLast=0,shDbg=0,shDbgEl=null;
+function shBassStep(t){
+ if(!shRun)return;shRaf=requestAnimationFrame(shBassStep);
+ let dt=(t-shLast)/1000;shLast=t;if(!(dt>0)||dt>.25)dt=1/60;
+ if(document.hidden){return}
+ if(performance.now()-shWiredAt>1500)shWire();
+ const x=shRawLow();
+ if(x<0){shAvg+=(0-shAvg)*(1-Math.exp(-dt/1));shOut+=(0-shOut)*(1-Math.exp(-dt/.35))}
+ else{
+  shAvg+=(x-shAvg)*(1-Math.exp(-dt/1));                      /* ~1 s running average = "loudness floor" */
+  const boost=1+.9*Math.min(1,shAvg*4);                      /* quiet tracks get more gain, loud ones less */
+  const dyn=Math.min(1,Math.max(0,(x-shAvg*boost)/(.10*boost))); /* the KICK component only */
+  const k=Math.min(1,Math.max(0,dyn*.92+x*.08));
+  shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
+ if(mesh)mesh.style.setProperty("--bg-bass",shOut.toFixed(3)); /* ONE variable, on the pulse wrapper */
+ if(t-shDbg>120){shDbg=t;if(shDbgEl)shDbgEl.textContent="bass "+shOut.toFixed(2)+" · avg "+shAvg.toFixed(2)+(shAnalyser?"":" · no analyser")}}
+function shBassStart(){if(shRun)return;shRun=true;shWire();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep)}
+function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}if(mesh)mesh.style.removeProperty("--bg-bass")}
+/* tiny debug readout, bottom-left corner (never above the close button's z-tier) */
+(function(){shDbgEl=document.createElement("div");shDbgEl.className="lsh-bassdbg";shDbgEl.setAttribute("aria-hidden","true");shDbgEl.textContent="bass 0.00";SH.append(shDbgEl)})();
+/* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
+function shLiveLow(){const x=shRawLow();if(x>=0)return x;const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
+ const n=an.frequencyBinCount,buf=shLiveLow.b&&(shLiveLow.b.length===n)?shLiveLow.b:(shLiveLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
+ const hz=an.context.sampleRate/an.fftSize;let s=0,c=0;for(let i=Math.max(1,(20/hz)|0);i<=Math.min(n-1,(120/hz)|0);i++){s+=buf[i];c++}return c?s/c/255:0}
 /* HSL -> "r g b" triple for CSS rgb(var(--c)/alpha) */
 const hslRGB=(h,s,l)=>{h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.max(0,Math.min(1,l));
  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return `${f(0)} ${f(8)} ${f(4)}`};
@@ -181,7 +272,12 @@ const MPOS=[[46,40],[16,22],[78,24],[24,78],[74,70]],MSZ=["72vmax","60vmax","78v
    blob is always safe; only a genuinely cross-origin image taints the canvas (→ neutral fallback). */
 function meshSrc(){const c=(SHC&&(SHC.currentSrc||SHC.src))||"";if(c)return c;const im=$("cover")&&$("cover").querySelector("img");return(im&&im.src)||shCoverSrc()}
 const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
-function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
+/* STRUCTURE (bass reaction, priority 1): .bg-pulse (scale 1 + bass*0.25, opacity, brightness through
+   --bg-bass, written by our own rAF loop — and NO CSS animation on transform here) > .lsh-spin
+   (rotation only) > .lsh-blob (drift only). Three separate elements: a CSS animation can never
+   override the bass transform, and the bass scale can never fight the rotation. */
+function meshBuild(){if(!SHBG)return null;const w=document.createElement("div");w.className="bg-pulse";w.setAttribute("aria-hidden","true");
+ const m=document.createElement("div");m.className="lsh-mesh";w.append(m);
  const sp=document.createElement("div");sp.className="lsh-spin";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
  /* FIX (colours didn't match the cover): sample the SHOWER'S OWN cover copy first — it is the exact
     artwork being displayed and (unlike #cover img) is guaranteed to be loaded here. */
@@ -199,21 +295,33 @@ function meshPreload(src){if(!src||src===meshTried||/^(data|blob):/.test(src))re
  const probe=new Image();probe.decoding="async";
  probe.onload=()=>{if(meshPending!==src)return;meshPending=null;if(!SH.hidden&&meshColors(probe))meshSet(true)};
  probe.onerror=()=>{if(meshPending===src)meshPending=null};probe.src=src}
-function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;mesh=n;
- if(reduceMotion||lite){if(o)o.remove()}else{n.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
- SHBG.prepend(n);
- if(reduceMotion||lite){meshStop();return}meshStart()}
-function meshLow(){/* average of the lowest analyser bins ≈ 20–120 Hz — reuses fx.js's existing
+function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;const wrap=n.parentNode; /* .bg-pulse */
+ if(reduceMotion||lite){if(o)o.remove()}else{wrap.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
+ SHBG.prepend(wrap);
+ mesh=n; /* --bg-bass AND --lshBass are published on the .lsh-mesh node (inherits to .bg-pulse/.lsh-spin) */
+ if(reduceMotion||lite){meshStop();shBassStart();return} /* static blobs — but the pulse still runs */
+ meshStart()}
+function meshLow(){/* 20–120 Hz from the OVERLAY'S OWN analyser (shWire/shRawLow above) — no longer
+  depends on fx.js publishing --bass (fx.js is frozen for the whole time the shower is open). */
+ const _x=shRawLow();if(_x>=0)return _x;
+ /* fallback: read fx.js's nodes directly if our own graph probe is unavailable */
+ /* average of the lowest analyser bins ≈ 20–120 Hz — reuses fx.js's existing
  analysers (DetuneFX.analyser / .analyserB during a crossfade); creates nothing, changes no sound */
  const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
  const n=an.frequencyBinCount,buf=meshLow.b&&(meshLow.b.length===n)?meshLow.b:(meshLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
  const hz=an.context.sampleRate/an.fftSize;let s=0,c=0;for(let i=Math.max(1,(20/hz)|0);i<=Math.min(n-1,(120/hz)|0);i++){s+=buf[i];c++}
  return c?s/c/255:0}
-function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;if(mesh)mesh.style.removeProperty("--lshBass")}
-function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;let last=performance.now(),acc=0,spin=mesh.spin||0;
+function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;if(mesh){mesh.style.removeProperty("--lshBass");mesh.style.removeProperty("--bg-bass")}shBassStop() /* the overlay's own bass loop stops with the overlay */}
+function meshStart(){if(!mesh||reduceMotion||lite)return;
+ /* reduced-motion / lite: CSS keeps the rotation animation on .lsh-spin (animation-duration is never
+    changed by JS) and the pulse rides on .bg-pulse through shBassStep — so the bass loop must still run. */
+ if(reduceMotion||lite){shBassStart();return}
+ if(meshRaf)return;
+ let last=performance.now(),acc=0,spin=mesh.spin||0;
+ shBassStart();
  const step=t=>{meshRaf=requestAnimationFrame(step);let dt=(t-last)/1000;last=t;if(!(dt>0)||dt>.25)dt=.016;
   if(document.hidden)return;acc+=dt;if(acc<.033)return;acc=0; /* cap at ~30 updates/s — plenty for slow drift */
-  const low=meshLow(),tgt=Math.min(1,Math.max(0,(low-.18)/.5));meshB=tgt>meshB?meshB+(tgt-meshB)*.55:meshB+(tgt-meshB)*.07; /* fast attack, slow release */
+  meshB=Math.min(1,Math.max(0,shOut)); /* SHARED kick follower — measured ONCE per frame by shBassStep (own analyser, fast attack / slow release) */
   mesh.style.setProperty("--lshBass",meshB.toFixed(3));meshT+=dt*(1+meshB*.7); /* bass speeds the whole drift up (slow breathing, never flashing) */
   spin+=dt*(6+meshB*4);/* deg/s: one turn per 60s baseline (6°/s), up to ~1.67x faster on the kick */mesh.spin=spin;
   const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--lshSpin",(spin%360).toFixed(2)+"deg");
@@ -232,7 +340,7 @@ function shArt(v){const img=$("cover").querySelector("img"),src=(img&&img.src)||
 function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
  if(v){SH.classList.remove("lsh-out");document.body.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
-  $("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;
+  shMeta();/* "/" separators -> ", " + ellipsis/marquee measurement (see shMeta) */
   /* pause ALL background painting while fullscreen — the shower covers everything, so the
      waveform canvas + embers are pure wasted GPU work behind it (this was the flicker/lag) */
   if(window.DetuneFX)DetuneFX.freeze=true;document.body.classList.add("lyrshow-open");
@@ -284,7 +392,7 @@ function shUI(){if(SH.hidden)return;
    top of an open overlay restarted its entrance animation from opacity:0 (the "flash then gone"
    symptom). Now a track change while open only updates CONTENT (cover src, title, artist, time,
    play/pause icon) — the left column itself is static markup in index.html and is never removed. */
-function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}}
+function shSync(){if(!SH.hidden){shMeta();/* "/" separators -> ", " + ellipsis/marquee measurement (see shMeta) */shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}}
 $("lshClose").onclick=()=>shOpen(false);
 $("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
 $("lshPrev").onclick=()=>{$("prev")?.click()};
