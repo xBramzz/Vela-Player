@@ -149,30 +149,33 @@ const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null
 /* HSL -> "r g b" triple for CSS rgb(var(--c)/alpha) */
 const hslRGB=(h,s,l)=>{h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.max(0,Math.min(1,l));
  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return `${f(0)} ${f(8)} ${f(4)}`};
-/* sample the cover on a tiny 32x32 canvas and pick up to 5 distinct, saturated hues */
+/* sample the cover on a tiny 32x32 canvas and pick up to 5 REAL dominant colours (bucketed
+   averaging over hue AND lightness — grayscale covers keep their grays, no hue shifting). */
 function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return null;const c=document.createElement("canvas");c.width=c.height=32;
- const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(img,0,0,32,32);const d=x.getImageData(0,0,32,32).data;
- const px=[];for(let i=0;i<d.length;i+=4){const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
-  if(df<.12||l<.12||l>.94)continue;let h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360;px.push({h,s:df,l})}
- if(px.length<6)return null;const bins={};for(const p of px){const k=(p.h/30)|0;const e=bins[k]||(bins[k]={w:0,h:0,l:0,n:0});e.w+=p.s;e.h+=p.h*p.s;e.l+=p.l;p.n}
- const cand=Object.values(bins).filter(e=>e.w>0).map(e=>({h:e.h/e.w,s:Math.min(1,e.w/(px.length*.35)+.35),l:Math.min(.72,Math.max(.34,e.l/(e.n||1)+.1))}))
-  .sort((a,b)=>b.s-a.s);const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.abs(((c0.h-o.h+540)%360)-180)>42))out.push(c0)}
- while(out.length<4&&cand.length)out.push(cand[out.length]);return out.length?out:null}catch(e){return null}}
-/* fallback: classic blood-red theme palette (or the live cover-theme hue) */
-function meshFallback(){const th=window.__detuneTheme&&window.__detuneTheme();const base=th?th.h:352,d=th?Math.max(.5,th.s):.8;
- return[{h:base,s:d,l:.42},{h:base+26,s:d*.9,l:.32},{h:base-24,s:d,l:.5},{h:base+150,s:d*.45,l:.26},{h:base+8,s:d*.8,l:.58}]}
-const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["72vmax","64vmax","60vmax","76vmax","58vmax"],
+ const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(img,0,0,32,32);const d=x.getImageData(0,0,32,32).data; /* SecurityError if tainted → neutral fallback */
+ const px=[];for(let i=0;i<d.length;i+=4){if(d[i+3]<128)continue;const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
+  let h=0;if(df>.04){h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360}else l<.04||l>.96?h=-1:h=-1; /* achromatic → hue bucket -1 (grays) */
+  px.push({r,g,b,h,s:df,l})}
+ if(px.length<6)return null;const bins={};for(const p of px){const k=p.s<=.04?"g":String((p.h/30)|0)+(p.l<.34?"L":p.l<.67?"M":"H");const e=bins[k]||(bins[k]={r:0,g:0,b:0,n:0});e.r+=p.r;e.g+=p.g;e.b+=p.b;e.n++}
+ const cand=Object.values(bins).filter(e=>e.n>=2).map(e=>{const r=e.r/e.n,g=e.g/e.n,b=e.b/e.n,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;let s=df/(1-Math.abs(2*l-1)||1);s=Math.min(1.2,s*1.2);return{r,g,b,l,s,n:e.n}}).sort((a,b)=>b.n-a.n);
+ const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.hypot(c0.r-o.r,c0.g-o.g,c0.b-o.b)>.17))out.push(c0)}
+ while(out.length<4&&cand.length&&out.length<cand.length)out.push(cand[out.length]);
+ return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;p.r=r*k;p.g=g*k;p.b=b*k;r=p.r;g=p.g;b=p.b}return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
+/* ONLY fallback when the canvas is CORS-tainted / unreadable: neutral dark grays (never theme red) */
+function meshFallback(){return["0.10 0.10 0.11","0.16 0.16 0.18","0.07 0.07 0.08","0.22 0.22 0.24","0.12 0.12 0.13"].map(s=>{const [r,g,b]=s.split(" ").map(Number);return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`})}
+const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["60vmax","58vmax","54vmax","60vmax","52vmax"], /* max ~60vmax — no giant single blur element */
  MF=[{a:.30,b:.22,c:.16,d:.26},{a:.24,b:.34,c:.22,d:.14},{a:.34,b:.18,c:.12,d:.28},{a:.2,b:.28,c:.32,d:.18},{a:.28,b:.22,c:.26,d:.32}];
 const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
 function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
+ const sp=document.createElement("div");sp.className="lsh-spin";m.append(sp); /* slow rotating carousel (~60s/turn, bass speeds it up in meshStart) */
  const img=$("cover").querySelector("img"),cols=meshColors(img)||meshFallback();
- cols.slice(0,5).forEach((c0,i)=>{const b=document.createElement("div");b.className="lsh-blob";
-  b.style.setProperty("--c",hslRGB(c0.h,c0.s,c0.l));b.style.setProperty("--x",MPOS[i][0]+"%");b.style.setProperty("--y",MPOS[i][1]+"%");
-  b.style.setProperty("--sz",MSZ[i]);b.dataset.i=i;b.dataset.t=(Math.random()*20).toFixed(2);b.dataset.ph=(Math.random()*6.283).toFixed(2);m.append(b)});
+ cols.slice(0,5).forEach((rgb,i)=>{const b=document.createElement("div");b.className="lsh-blob";
+  b.style.setProperty("--c",rgb);b.style.setProperty("--x",MPOS[i][0]+"%");b.style.setProperty("--y",MPOS[i][1]+"%");
+  b.style.setProperty("--sz",MSZ[i]);b.dataset.i=i;b.dataset.t=(Math.random()*20).toFixed(2);b.dataset.ph=(Math.random()*6.283).toFixed(2);sp.append(b)});
  return m}
 function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;mesh=n;
- if(o&&reduceMotion)o.remove();else if(o)n.classList.add("lsh-mesh-in"); /* ~1s crossfade of the colour set */
- SHBG.prepend(n);if(reduceMotion&&o)setTimeout(()=>o.remove(),1100);
+ if(reduceMotion||lite){if(o)o.remove()}else{n.classList.add("lsh-mesh-in");if(o){o.classList.remove("lsh-mesh-in");o.classList.add("lsh-mesh-out");setTimeout(()=>o.remove(),1100)}} /* ~1s crossfade old→new colours */
+ SHBG.prepend(n);
  if(reduceMotion||lite){meshStop();return}meshStart()}
 function meshLow(){/* average of the lowest analyser bins ≈ 20–120 Hz — reuses fx.js's existing
  analysers (DetuneFX.analyser / .analyserB during a crossfade); creates nothing, changes no sound */
@@ -181,20 +184,25 @@ function meshLow(){/* average of the lowest analyser bins ≈ 20–120 Hz — re
  const hz=an.context.sampleRate/an.fftSize;let s=0,c=0;for(let i=Math.max(1,(20/hz)|0);i<=Math.min(n-1,(120/hz)|0);i++){s+=buf[i];c++}
  return c?s/c/255:0}
 function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;if(mesh)mesh.style.removeProperty("--lshBass")}
-function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;let last=performance.now(),acc=0;
+function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;let last=performance.now(),acc=0,spin=mesh.spin||0;
  const step=t=>{meshRaf=requestAnimationFrame(step);let dt=(t-last)/1000;last=t;if(!(dt>0)||dt>.25)dt=.016;
   if(document.hidden)return;acc+=dt;if(acc<.033)return;acc=0; /* cap at ~30 updates/s — plenty for slow drift */
   const low=meshLow(),tgt=Math.min(1,Math.max(0,(low-.18)/.5));meshB=tgt>meshB?meshB+(tgt-meshB)*.55:meshB+(tgt-meshB)*.07; /* fast attack, slow release */
   mesh.style.setProperty("--lshBass",meshB.toFixed(3));meshT+=dt*(1+meshB*.7); /* bass speeds the whole drift up (slow breathing, never flashing) */
-  const tt=meshT;for(const b of mesh.children){const i=+b.dataset.i||0,f=MF[i]||MF[0],ph=+b.dataset.ph,sp=meshSpd(b),x=tt*sp;
+  spin+=dt*(6+meshB*4);/* deg/s: one turn per 60s baseline (6°/s), up to ~1.67x faster on the kick */mesh.spin=spin;
+  const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--lshSpin",(spin%360).toFixed(2)+"deg");
+  const tt=meshT;for(const b of (sp0||mesh).children){const i=+b.dataset.i||0,f=MF[i]||MF[0],ph=+b.dataset.ph,sp=meshSpd(b),x=tt*sp;
    b.style.setProperty("--tx",(Math.sin(x*f.a+ph)*9).toFixed(2)+"%");b.style.setProperty("--ty",(Math.cos(x*f.b+ph*1.7)*8).toFixed(2)+"%");
-   const sc=1+meshB*.25;b.style.setProperty("--sx",sc.toFixed(3));b.style.setProperty("--sy",(sc*(1+.05*Math.sin(x*f.c+ph))).toFixed(3));
-   b.style.opacity=(.62+meshB*.28).toFixed(3)}};
+   const sc=1+meshB*.2;b.style.setProperty("--sx",sc.toFixed(3));b.style.setProperty("--sy",(sc*(1+.05*Math.sin(x*f.c+ph))).toFixed(3));
+   b.style.opacity=(.62+meshB*.22).toFixed(3)}};
  meshRaf=requestAnimationFrame(step)}
-function shArt(v){const img=$( "cover").querySelector("img");if(img&&img.src){(v?SHA:SHB2).src=img.src;(v?SHA:SHB2).classList.add("lsh-vis");(v?SHB2:SHA).classList.remove("lsh-vis");shBgTop=v}else{SHA.classList.remove("lsh-vis");SHB2.classList.remove("lsh-vis")}
- if(SHC){if(img&&img.src){SHC.src=img.src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}
+function shArt(v){const img=$("cover").querySelector("img"),src=(img&&img.src)||shCoverSrc();
+ const top=v?SHA:SHB2,bot=v?SHB2:SHA; /* two stacked copies of the blurred cover CROSSFADE (~1s CSS transition) on track change */
+ if(top.getAttribute("src")!==src)top.src=src;top.classList.add("lsh-vis");top.classList.remove("lsh-gone");
+ bot.classList.remove("lsh-vis");bot.classList.add("lsh-gone");shBgTop=v;
+ if(SHC){if(src){SHC.src=src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}
  /* moving mesh background: rebuild (with ~1s crossfade) whenever the cover changes */
- meshSet(!!(img&&img.src))}
+ meshSet(!!src)}
 function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
  if(v){SH.classList.remove("lsh-out");document.body.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
@@ -218,7 +226,9 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}
 function shUI(){if(SH.hidden)return;
- $("lshCur").textContent=fmtT(a.currentTime);$("lshDur").textContent=fmtT(a.duration);
+ $("lshCur").textContent=fmtT(a.currentTime);
+ /* Apple-style: elapsed left, REMAINING as −m:ss right (falls back to total without metadata) */
+ $("lshDur").textContent=Number.isFinite(a.duration)?"-"+fmtT(Math.max(0,a.duration-a.currentTime)):fmtT(a.duration);
  if(!shSeeking)$("lshSeek").value=String(Math.round((a.duration?Math.min(1,a.currentTime/a.duration):0)*1000));
  const playing=!a.paused&&!a.ended;
  $("lshPlayIcon").innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
@@ -233,8 +243,12 @@ $("lshClose").onclick=()=>shOpen(false);
 $("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
 $("lshPrev").onclick=()=>{$("prev")?.click()};
 $("lshNext").onclick=()=>{$("next")?.click()};
-{const SK=$("lshSeek");SK.addEventListener("input",()=>{shSeeking=true;if(Number.isFinite(a.duration))a.currentTime=a.duration*(+SK.value/1000)});
- SK.addEventListener("change",()=>{shSeeking=false});SK.addEventListener("pointerup",()=>{shSeeking=false})}
+{const SK=$("lshSeek");SK.addEventListener("input",()=>{shSeeking=true;SK.classList.add("lsh-drag");if(Number.isFinite(a.duration))a.currentTime=a.duration*(+SK.value/1000)});
+ SK.addEventListener("change",()=>{shSeeking=false;SK.classList.remove("lsh-drag")});SK.addEventListener("pointerup",()=>{shSeeking=false;SK.classList.remove("lsh-drag")});
+ /* keep --p (fill %) fresh for the Apple-style track gradient — fx.js's publisher is frozen while
+    the shower is open */
+ const shP=()=>{const v=(SK.value-SK.min)/(SK.max-SK.min)*100;SK.style.setProperty("--p",v.toFixed(2)+"%")};
+ new MutationObserver(()=>{if(!SH.hidden)shP()}).observe(SK,{attributes:true,attributeFilter:["value"]});shP()}
 for(const ev of["timeupdate","durationchange"])a.addEventListener(ev,shUI);
 a.addEventListener("play",shUI);a.addEventListener("pause",shUI);a.addEventListener("ended",shUI);
 new MutationObserver(shSync).observe($("title"),{childList:true,characterData:true,subtree:true});
