@@ -106,10 +106,16 @@ html.lite .lyrics{background:color-mix(in srgb,var(--blood-dk) 55%,black)}
 @supports(height:100dvh){.lshower{height:100dvh!important}}
 .lshower,.lshower *{box-sizing:border-box}
 .lshower[hidden]{display:none!important}
-html:not(.lite) .lshower{animation:lshIn .42s var(--ease,cubic-bezier(.2,.8,.2,1))}
-html:not(.lite) .lshower.lsh-out{animation:lshOut .3s ease forwards}
-@keyframes lshIn{from{opacity:0;transform:scale(1.03)}to{opacity:1;transform:none}}
-@keyframes lshOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.985)}}
+/* FIX (left column invisible while overlay open): the entrance used to be a KEYFRAME animation.
+   Because extras.js re-applies `SH.hidden=false` on every track change (via shSync), the browser
+   RESTARTED the whole `.lshower` keyframe — and with it the nested `.lsh-art` entrance — from
+   opacity:0 every time, so the left column flashed and vanished again. Now the open/close fade is
+   ONE plain opacity transition on the ROOT overlay element only; no child of the overlay has any
+   entrance/exit animation that could reset it to opacity 0. */
+.lshower{transition:opacity .42s var(--ease,cubic-bezier(.2,.8,.2,1));opacity:1}
+/* Close = ONE opacity transition on the ROOT overlay element only (`.lsh-out` is set on <body>,
+   so the fade never touches a hidden/display:none element and children keep their own styles). */
+body.lsh-out .lshower{opacity:0}
 /* two stacked copies of the cover so a track change CROSSFADES instead of popping */
 /* FIX 2: .lshower-bg used to be z-index:-1, which painted it BEHIND the overlay's own opaque
    background (var(--pool2)) → only a plain dark gradient was visible. Now: bg (z0) < grid (z1)
@@ -132,6 +138,14 @@ html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infin
 .lshower-close:hover,.lshower-close:focus-visible{background:rgba(255,255,255,.2)!important;opacity:1;transform:scale(1.06)}
 /* REMOVED (old centred modal head): .lshower-head / .lshower-kicker / .lshower-head h2 / .lshower-head p — replaced by the two-column layout below */
 /* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
+/* z-ORDER inside the overlay: background layers stay BELOW, both columns sit ABOVE them.
+   (.lshower-bg = 0, .lshower-frost = 1, grid = 2, left/lyrics columns = 3, foot = 4, close X = 5) */
+.lshower-bg{z-index:0!important}
+.lshower-frost{z-index:1!important}
+.lshower-grid{z-index:2!important}
+.lshower-main,.lshower-body{z-index:3!important}
+.lshower-foot{z-index:4!important}
+.lshower-close{z-index:5!important}
 /* ---- FIX 2: two columns filling the FULL screen (grid overlays the whole viewport,
    the hint footer floats on top of it instead of eating a row and leaving a grey strip) ---- */
 .lshower-grid{position:absolute;inset:0;z-index:1;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:clamp(18px,4vw,56px);align-items:stretch;justify-items:stretch;padding:clamp(18px,4vh,48px) clamp(20px,4vw,64px) clamp(44px,7vh,64px);background:none;border:0;box-shadow:none}
@@ -143,13 +157,24 @@ html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infin
    collapse to a tiny/zero-height box → the left column looked empty). The cover also gets an
    explicit height fallback for engines without aspect-ratio support. */
 .lshower-grid,.lshower-main,.lshower-body,.lshower-foot,.lsh-art,.lsh-seek,.lsh-ctrls{box-sizing:border-box!important}
-/* FIX 1: belt-and-braces visibility — the left column must never be hidden by a stray rule. */
-.lshower-grid,.lshower-main,.lshower-body,.lsh-art,.lsh-name,.lsh-sub,.lsh-seek,.lsh-ctrls{visibility:visible!important;opacity:1!important}
+/* ROOT CAUSE of the invisible LEFT COLUMN (cover/title/artist/progress/play controls):
+   the overlay's left column is a <main class="lshower-main">, and the "freeze the page behind the
+   shower" rule below used a BARE `main` selector — which matched that nested <main> too and painted
+   it with `opacity:0!important;pointer-events:none!important` for as long as the overlay was open
+   (it only flashed visible in the ~300 ms window around open/close when the body class toggled).
+   Now every hide rule is scoped so it can NEVER reach anything inside .lshower. */
+body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!important}
+/* FINAL SAFETY OVERRIDE — nothing may hide the two columns while the overlay is open.
+   Background layers stay at z-index 0/1 (.lshower-bg/.lshower-frost), the columns sit above them. */
+.lshower .lshower-main,.lshower .lshower-body{position:relative;z-index:2;opacity:1!important;visibility:visible!important;display:flex!important;transform:none!important;pointer-events:auto!important;filter:none!important}
+/* same guarantee for every element inside the left column (cover, title, artist, progress bar,
+   prev / play-pause / next) so no stray rule anywhere in the app can fade it out again */
+.lshower .lshower-main *{opacity:1!important;visibility:visible!important;transform:none!important}
 .lsh-art{width:min(38vw,44vh,440px);max-width:100%;aspect-ratio:1/1;height:min(38vw,44vh,440px);border-radius:18px;overflow:hidden;background:repeating-radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blood-dk) 80%,black) 0 3px,color-mix(in srgb,var(--pool2) 80%,black) 3px 5px),var(--pool2);box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--blood) 45%,transparent),0 0 0 1px rgba(255,255,255,.08)}
 @supports(aspect-ratio:1/1){.lsh-art{height:auto}}
 .lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
-html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ease,cubic-bezier(.2,.8,.2,1)) both}
-@keyframes lshArtIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
+/* entrance for the cover box: REMOVED the `lshArtIn` keyframe (started at opacity:0 with fill-mode
+   both — every re-render flashed it back to invisible). Static final state instead. */
 .lsh-name{margin:6px 0 0;max-width:100%;font:700 clamp(20px,2.6vw,34px)/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lsh-sub{margin:2px 0 0;max-width:100%;font:500 clamp(14px,1.4vw,18px)/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lsh-seek{display:flex;align-items:center;gap:10px;width:min(100%,420px);margin-top:8px}
@@ -192,12 +217,16 @@ html:not(.lite) .lshower:not(.lsh-out) .lsh-art{animation:lshArtIn .55s var(--ea
    no composite, no backdrop-filter cost) and fx.js stops its rAF loop entirely.
    NOTE: only fixed decorative layers are hidden — the player bar stays visible (just covered)
    so grid layout never reflows underneath the open shower. */
-body.lyrshow-open .bg,body.lyrshow-open .fog,body.lyrshow-open .yard,body.lyrshow-open .embers,
+body.lyrshow-open>.bg,body.lyrshow-open>.fog,body.lyrshow-open>.yard,body.lyrshow-open>.embers,
 body.lyrshow-open #visual,body.lyrshow-open .stage::after,body.lyrshow-open body::before,
 body.lyrshow-open body::after{display:none!important;animation:none!important}
-/* also crush the app itself behind the overlay: opacity 0 keeps layout (no reflow when closing)
-   but guarantees no pixel of the player, panels or grey shell edge can show around the shower */
-body.lyrshow-open main,body.lyrshow-open .fab,body.lyrshow-open .helpbtn,body.lyrshow-open .modal:not(#shortcuts),body.lyrshow-open .toast{opacity:0!important;pointer-events:none!important}
+/* hide the app itself behind the overlay: opacity 0 keeps layout (no reflow when closing)
+   but guarantees no pixel of the player, panels or grey shell edge can show around the shower.
+   *** SCOPED TO DIRECT CHILDREN OF <body>, EXCLUDING THE OVERLAY *** — the previous version used
+   a bare `main` selector, which also matched <main class="lshower-main"> INSIDE #lshower and made
+   the whole left column (cover, title, artist, progress bar, prev/play/next) invisible for as long
+   as the lyrics view was open. That was the root cause of this bug. */
+body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!important}
 body.lyrshow-open{padding:0!important;margin:0!important}
 /* ---- lyric shower effects ---- */
 @property --lshGlow{syntax:'<color>';inherits:false;initial-value:rgba(255,59,71,0)}
