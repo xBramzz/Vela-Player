@@ -254,14 +254,22 @@ function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
    Attaches via DetuneApp.audioGraph; never calls createMediaElementSource (app.js owns #audio;
    double-binding throws + re-routes sound) and never connectOutput() (speakers untouched). */
 let ama=null,amaCanvas=null,amaTimer=0,amaGlow=null,amaLast={t:0,lo:0,mid:0,hi:0};
+/* The glow div does NOT depend on audiomotion-analyzer loading — create it on its own so the
+   background reacts even if the vendored script is stale/missing (e.g. old service-worker cache). */
+function amaGlowMake(){if(amaGlow||!SHBG)return null;
+ const g=document.createElement("div");g.className="lsh-bassglow";g.setAttribute("aria-hidden","true");
+ SHBG.append(g);amaGlow=g;
+ const bl=mesh?mesh.querySelectorAll(".lsh-blob"):null;
+ for(let i=0;bl&&i<3&&bl[i];i++){const c=bl[i].style.getPropertyValue("--c").trim();if(c)g.style.setProperty("--bgc"+(i+1),c)}
+ return g}
 function amaOk(){return typeof window.AudioMotionAnalyzer==="function"}
-function amaBuild(){if(!SHBG||!amaOk())return;const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return;
+function amaBuild(){if(!SHBG)return;amaGlowMake(); /* glow first, analyzer second — never blocked by it */
+ if(!amaOk())return;const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return;
  try{
-  if(ama&&ama.isDestroyed){amaKill()} /* instance torn down → full rebuild */
-  else if(ama&&ama.audioCtx!==G.ctx){amaKill()} /* AudioContext replaced (teardown/retry) → rebuild */
+  if(ama&&(ama.isDestroyed||ama.audioCtx!==G.ctx)){amaKill()} /* torn down / AudioContext replaced → rebuild */
   if(!ama){
    amaCanvas=document.createElement("canvas");amaCanvas.className="lsh-ama";amaCanvas.setAttribute("aria-hidden","true");
-   SHBG.append(amaCanvas); /* sits BELOW .lsh-bassglow (DOM order), invisible — data source only */
+   SHBG.append(amaCanvas); /* invisible (opacity:0), below .lsh-bassglow — data source only */
    ama=new AudioMotionAnalyzer(G.ctx,{canvas:amaCanvas,sourceNode:G.master,
     mode:2, /* circular: used only for its LOW/MID/HIGH energy model — nothing here draws bars/LEDs */
     isMedi:false,isBassBlob:false,showLaneLines:false,showBgBars:0,showCap:false,isMirrored:false,
@@ -269,22 +277,19 @@ function amaBuild(){if(!SHBG||!amaOk())return;const G=window.DetuneApp&&DetuneAp
     minFreq:20,maxFreq:16000,smoothing:.8,multAgility:.7});
    /* sourceNode connects with keepConnected=false by default — master keeps feeding
       ctx.destination untouched; the analyzer only PROBEs it. */
-   amaGlow=document.createElement("div");amaGlow.className="lsh-bassglow";amaGlow.setAttribute("aria-hidden","true");
-   /* Tint the glow with the SAME cover colours the mesh uses (first 3 blobs' --c triples). */
-   if(mesh){const bl=mesh.querySelectorAll(".lsh-blob");for(let i=0;i<3&&bl[i];i++){const c=bl[i].style.getPropertyValue("--c").trim();if(c)amaGlow.style.setProperty("--bgc"+(i+1),c)}}
-   SHBG.append(amaGlow); /* after canvas + mesh children → paints on top of them, under .lshower-grid */
-  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas);if(amaGlow)SHBG.append(amaGlow)}
+  }else if(amaCanvas&&amaCanvas.parentNode!==SHBG){SHBG.append(amaCanvas)}
+  if(amaGlow.parentNode!==SHBG)SHBG.append(amaGlow); /* keep it LAST inside .lshower-bg → paints over mesh */
   if(!ama.isOn)ama.toggleAnalyzer(true);
   clearInterval(amaTimer);amaTimer=setInterval(()=>{try{if(ama&&ama.isOn&&G.master)G.master.connect(ama)}catch{}},250); /* rAF-throttle keep-alive: re-assert the probe tap (idempotent, adds no audible path) */
  }catch(e){amaStop()}}
 function amaStop(){clearInterval(amaTimer);amaTimer=0;if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
 function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null;
- if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}
- if(amaGlow){try{amaGlow.remove()}catch{}amaGlow=null}}
+ if(amaCanvas){try{amaCanvas.remove()}catch{}amaCanvas=null}}
 /* Feed AudioMotion's smoothed LOW band into the CSS vars (--bgLo/--bgMid/--bgHi). Called once per
    frame from shBassStep. Falls back to our own kick follower (shOut) when the analyzer isn't up
    (script missing / graph not built yet), so the glow ALWAYS tracks the bass somehow. */
 function amaGlowStep(t){
+ if(!amaGlow)amaGlowMake(); /* safety net: glow exists even if amaBuild() never ran */
  if(!amaGlow)return;
  let lo=-1,mid=0,hi=0;
  try{if(ama&&ama.isOn){lo=ama.getEnergy("bass");mid=ama.getEnergy("lowMid");hi=ama.getEnergy("mid")}}catch{lo=-1} /* presets: bass 20–250 Hz, lowMid 250–500, mid 500–2k */
@@ -504,5 +509,6 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH?.hidden){shOpen
 $("shortcuts")?.querySelector("ul")?.insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
 load();
 })();
-/* teardown hook: if the app ever fully closes its AudioContext, drop our analyzer instance */
-window.DetuneAMA={kill:amaKill};
+/* DEBUG-ONLY probe: window.DetuneAMA.bass() → current LOW-band value driving the glow.
+   kill() is hoisted so it's always defined, even if this line somehow runs before amaKill. */
+window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo};
