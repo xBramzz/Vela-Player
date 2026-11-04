@@ -243,13 +243,40 @@ function shRawLow(){
    permanent glow); a kick transient spikes against it. Smoothing: attack ≈50 ms, release ≈350 ms
    (one-pole time constants evaluated per frame). */
 let shAvg=0,shOut=0,shLast=0;
+/* THE ONE AudioMotion instance. FINAL node of app.js's graph = the master GainNode
+   (master → ctx.destination, AFTER pitch-worklet/EQ/compressor/reverb/volume AND after the
+   crossfade gains, because deck B is merged into that same master). Tapped as a pure PROBE:
+   AMA's connectInput() does master.connect(ama._input) for AudioNodes — it NEVER calls
+   createMediaElementSource again (#audio stays bound once, in app.js) and with
+   connectSpeakers:false AMA never reaches ctx.destination, so output is neither doubled nor
+   altered. useCanvas:false → data only, nothing painted, but getEnergy() still updates per frame. */
+let ama=null,amaRawBass=0,amaBass=0,amaSink=null,amaDbg=null;
+function amaBuild(){if(ama)return true;if(typeof window.AudioMotionAnalyzer!=="function")return false;
+ const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return false;
+ try{
+  ama=new AudioMotionAnalyzer({source:G.master,audioCtx:G.ctx,connectSpeakers:false,useCanvas:false,smoothing:.6});
+  /* belt & braces: if any code path ever routes AMA's output somewhere, send it into a ZERO-GAIN
+     sink (never ctx.destination) → guaranteed silence / no echo / no double audio */
+  try{amaSink=G.ctx.createGain();amaSink.gain.value=0;ama.connectOutput(amaSink)}catch{}
+  console.info("[extras] AudioMotion attached to final master GainNode (probe only)");
+ }catch(e){console.warn("[extras] AudioMotion build failed:",e&&e.message||e);ama=null}
+ return !!ama}
+/* AMA's rAF loop is what updates the FFT — with useCanvas:false nothing is painted, but the loop
+   must run for getEnergy() to return live data. Start once; never retry every frame. */
+function amaStart(){if(!ama||ama.isDestroyed||ama._started)return;try{ama.toggleAnalyzer(true);ama._started=ama.isOn}catch{}}
+function amaStop(){if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false);ama._started=false}catch{}}} /* keep instance for cheap reopen */
+function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();if(amaSink)ama.disconnectOutput(amaSink);ama.destroy()}catch{}}ama=null;amaSink=null;amaRawBass=0;amaBass=0}
+/* temporary DEBUG readout (bottom-left): raw vs smoothed bass from AudioMotion */
+function amaDbgMake(){if(amaDbg||!document.body)return;const d=document.createElement("div");d.id="ama-dbg";d.setAttribute("aria-hidden","true");
+ d.textContent="bass raw -- · smooth --";document.body.append(d);amaDbg=d}
+function amaDbgStep(){if(!amaDbg)return;amaDbg.textContent="bass raw "+(ama?amaRawBass.toFixed(3):"--")+" · smooth "+amaBass.toFixed(3)+(ama?"":" · AMA not built")}
 function shBassStep(t){
  if(!shRun)return;shRaf=requestAnimationFrame(shBassStep);
  let dt=(t-shLast)/1000;shLast=t;if(!(dt>0)||dt>.25)dt=1/60;
  if(document.hidden){return}
  if(performance.now()-shWiredAt>1500)shWire();
- amaBuild(); /* re-attempt EVERY frame while open — the graph may be published late (see shWire note);
-   no-op once the instance exists, so it costs nothing after the first success */
+ amaBuild();amaStart(); /* re-attempt EVERY frame while open — the graph may be published late (see shWire note);
+   both are no-ops once the instance exists and is running, so they cost nothing after the first success */
  const x=shRawLow();
  if(x<0){shAvg+=(0-shAvg)*(1-Math.exp(-dt/1));shOut+=(0-shOut)*(1-Math.exp(-dt/.35))}
  else{
@@ -258,112 +285,26 @@ function shBassStep(t){
   const dyn=Math.min(1,Math.max(0,(x-shAvg*boost)/(.10*boost))); /* the KICK component only */
   const k=Math.min(1,Math.max(0,dyn*.92+x*.08));
   shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
- if(mesh){mesh.style.setProperty("--bg-bass",shOut.toFixed(3));/* one variable, inherited by .bg-pulse/.lsh-mesh/.lsh-spin */
-  const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--bg-bass",shOut.toFixed(3))} /* ALSO set directly on .lsh-spin: reduced-motion/lite CSS pins transform:none on its ANCESTORS (.lsh-mesh-out crossfade), which would otherwise clip the subtree and freeze an inherited var */
- amaGlowStep(t);coverBassStep(t)} /* glow + blurred-cover bass reaction */
-function shBassStart(){amaGlowMake();if(amaGlow&&SHBG&&amaGlow.parentNode===SHBG)SHBG.append(amaGlow); /* glow always LAST inside .lshower-bg → above mesh, below content */
- if(shRun)return;shRun=true;shWire();amaBuild();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep);
+ /* AUDIO MOTION BASS → --bg-bass ON .bg-pulse ONLY (priority 1 of this feature).
+    raw = analyzer.getEnergy("bass") (preset 20–250 Hz), then ONE-POLE SMOOTHING WITH
+    FAST ATTACK (~50 ms) / SLOW RELEASE (~350 ms). Fallback = our own kick follower (shOut)
+    until the analyzer exists (graph published late / script missing). */
+ if(ama&&!ama.isDestroyed){try{amaRawBass=+ama.getEnergy("bass")||0}catch{amaRawBass=0}}else amaRawBass=0;
+ const src=ama?amaRawBass:shOut;
+ amaBass+=(src-amaBass)*(src>amaBass?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)));
+ const bgVal=ama?amaBass:shOut;
+ if(mesh){const w=mesh.parentNode;/* .bg-pulse — the ONLY element we write --bg-bass on; children inherit it */
+  if(w&&w.classList&&w.classList.contains("bg-pulse"))w.style.setProperty("--bg-bass",bgVal.toFixed(3))}
+ amaDbgStep()} /* temporary debug readout */
+function shBassStart(){amaDbgMake();if(shRun)return;shRun=true;shWire();amaBuild();amaStart();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep);
  /* DIAGNOSTIC (temporary — remove after verifying): proves the rAF loop is actually running.
     Type in console: DetuneAMA.loop()  → must print "alive @ <timestamp>" every second while open.
     If it prints "DEAD", nothing below can possibly move and we look upstream instead. */
  try{window.DetuneAMA&&Object.assign(DetuneAMA,{loop:()=>{console.log(shRun?"alive @ "+Math.round(performance.now()):"DEAD");clearInterval(DetuneAMA._lp);DetuneAMA._lp=setInterval(()=>console.log("bass-loop alive @ "+Math.round(performance.now())+" · wired:"+!!shAnalyser+" · kick:"+shOut.toFixed(3)+" · ama:"+(!!ama&&ama.isOn)),1000)}})}catch(e){}}
-function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
- if(mesh){mesh.style.removeProperty("--bg-bass");const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.removeProperty("--bg-bass")}
- /* reset BOTH blurred-cover <img>s (#lshArt/#lshArtB) so a stale inline --bg-bass can't linger */
- for(const im of[SHA,SHB2]){if(im)im.style.removeProperty("--bg-bass")}
- amaStop()}
-/* ================= BLURRED COVER BASS REACTION (the user asked for THIS one) =================
-   The background of the lyrics overlay IS these two <img>s (.lshower-bg img → #lshArt/#lshArtB).
-   They consume ONE variable — --bg-bass (extras.css): brightness .7→.86, saturate 1.35→1.6,
-   scale 1.6→1.645 on every kick. This writes it DIRECTLY onto the visible image element itself
-   (not just the mesh wrapper), so nothing in between (crossfade wrappers, reduced-motion rules
-   pinning ancestor transforms, z-tier reshuffles) can ever intercept or freeze it. Source value:
-   AudioMotion's LOW band when the analyzer is live, our own kick follower (shOut) otherwise. */
-let covLo=0;
-function coverBassStep(t){
- const vis=(v)=>{if(!v)return;let b=covLo;if(v===SHA&&SHB2&&SHB2.classList.contains("lsh-vis"))b=Math.max(covLo,shOut);v.style.setProperty("--bg-bass",b.toFixed(3))};
- let lo=-1;
- try{if(ama&&ama.isOn&&!ama.isDestroyed)lo=ama.getEnergy("bass")}catch{lo=-1}
- if(!(lo>=0)){covLo+=(Math.min(1,shOut*1.15)-covLo)*(shOut>covLo?.5:.12);vis(SHA);vis(SHB2);return}
- const dt=Math.min(.1,Math.max(0,(t-amaLast.t)/1000)); /* amaLast.t already updated by amaGlowStep this frame */
- covLo+=(Math.min(1,lo)-covLo)*(lo>covLo?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.3)));
- vis(SHA);vis(SHB2)}
-/* ================= AUDIOMOTION BASS GLOW (optional, extras-only) =================
-   audiomotion-analyzer renders NO numbers itself — the readout at the bottom was our own
-   debug div ("bass 0.42 · avg 0.11"), now removed (see shBassStep / the old lsh-bassdbg IIFE).
-   DATA-ONLY instance: useCanvas:false → nothing is drawn and no canvas is appended to the page;
-   getEnergy() still works because the analyzer's rAF loop updates the FFT even when the draw
-   body skips all painting. connectSpeakers:false → AMA never connects its output to
-   ctx.destination, so app.js's audio path is untouched. source:G.master taps the FINAL master
-   GainNode (post pitch-worklet/fx chain); createMediaElementSource is never called again.
-   Those values drive .lsh-bassglow behind the mesh — the visible background pulses with the bass. */
-let ama=null,amaGlow=null,amaLast={t:0,lo:0,mid:0,hi:0};
-/* The glow div does NOT depend on audiomotion-analyzer loading — create it on its own so the
-   background reacts even if the vendored script is stale/missing (e.g. old service-worker cache). */
-function amaGlowMake(){if(amaGlow||!SHBG)return null;
- const g=document.createElement("div");g.className="lsh-bassglow";g.setAttribute("aria-hidden","true");
- SHBG.append(g);amaGlow=g;
- const bl=mesh?mesh.querySelectorAll(".lsh-blob"):null;
- for(let i=0;bl&&i<3&&bl[i];i++){const c=bl[i].style.getPropertyValue("--c").trim();if(c)g.style.setProperty("--bgc"+(i+1),c)}
- return g}
-function amaOk(){return typeof window.AudioMotionAnalyzer==="function"}
-function amaBuild(){if(!SHBG)return;amaGlowMake(); /* glow first, analyzer second — never blocked by it */
- if(!amaOk())return;const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return;
- try{
-  if(ama&&(ama.isDestroyed||ama.audioCtx!==G.ctx)){amaKill()} /* torn down / AudioContext replaced → rebuild */
-  if(!ama){
-   /* DATA-ONLY instance: useCanvas:false → no bars/LEDs are ever painted (AMA still creates an
-      off-DOM canvas internally and runs its rAF loop — that's what updates the FFT, so
-      getEnergy() keeps working). connectSpeakers:false → AMA never connects its output to
-      ctx.destination; audio stays on app.js's own path.
-      source:G.master taps the FINAL master GainNode (post pitch-worklet/fx chain) as a probe —
-      createMediaElementSource is never called again (app.js already owns <audio id="audio">). */
-   /* DATA-ONLY instance. VERIFIED against the vendored 4.5.4 build:
-      - constructor(container, options): passing G.ctx as arg 1 with a NON-empty options object is
-        IGNORED (line ~234: options are only hoisted when the first arg is the sole argument) — so
-        the context must ALSO be in options as audioCtx, otherwise AMA news up its own AudioContext.
-      - source:<AudioNode> → connectInput() does node.connect(this._input) — a pure probe; NO
-        createMediaElementSource for AudioNodes (only for HTMLMediaElements), so app.js's graph is
-        never re-routed and nothing throws "already bound".
-      - connectSpeakers:false → skips connectOutput() ONLY at construction (line ~305). toggleAnalyzer
-        NEVER touches connections — it only schedules _draw rAF — so the analyser chain stays alive
-        while silent. We still pass a ZERO-GAIN sink below as belt-and-braces: even if any code path
-        did connectAMA's output to ctx.destination, gain 0 = no echo / no double-audio.
-      - useCanvas:false → nothing painted; getFloatFrequencyData + updateEnergy run per frame inside
-        _draw(), so getEnergy("bass") returns live data. */
-   ama=new AudioMotionAnalyzer({
-    audioCtx:G.ctx,
-    source:G.master,
-    connectSpeakers:false,
-    useCanvas:false,
-    fftSize:8192,
-    minFreq:20,maxFreq:16000,
-    smoothing:.7
-   });
-   try{const sink=G.ctx.createGain();sink.gain.value=0;ama.connectOutput(sink);sink.connect(G.ctx.destination)}catch{}
-   console.info("[extras] AudioMotion analyzer attached to master");
-  }
-  if(amaGlow&&SHBG&&amaGlow.parentNode!==SHBG)SHBG.append(amaGlow); /* keep it LAST inside .lshower-bg → paints over mesh */
-  if(!ama.isOn)ama.toggleAnalyzer(true);
- }catch(e){console.warn("[extras] AudioMotion build failed:",e&&e.message||e);amaKill()}} /* stop retrying a broken instance; kick-follower fallback keeps the cover reacting */
-function amaStop(){if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false)}catch{}}} /* keep instance for cheap reopen */
-function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();ama.destroy()}catch{}}ama=null}
-/* Feed AudioMotion's smoothed LOW band into the CSS vars (--bgLo/--bgMid/--bgHi). Called once per
-   frame from shBassStep. Falls back to our own kick follower (shOut) when the analyzer isn't up
-   (script missing / graph not built yet), so the glow ALWAYS tracks the bass somehow. */
-function amaGlowStep(t){
- if(!amaGlow)amaGlowMake(); /* safety net: glow exists even if amaBuild() never ran */
- if(!amaGlow)return;
- let lo=-1,mid=0,hi=0;
- try{if(ama&&ama.isOn){lo=ama.getEnergy("bass");mid=ama.getEnergy("lowMid");hi=ama.getEnergy("mid")}}catch{lo=-1} /* presets: bass 20–250 Hz, lowMid 250–500, mid 500–2k */
- if(!(lo>=0)){lo=Math.min(1,shOut*1.15)} /* fallback: shared kick follower from shRawLow()/shBassStep */
- const dt=Math.min(.1,Math.max(0,(t-amaLast.t)/1000));amaLast.t=t;
- const rise=1-Math.exp(-dt/.05),fall=1-Math.exp(-dt/.3); /* fast attack / smooth release */
- amaLast.lo+=(Math.min(1,lo)-amaLast.lo)*(lo>amaLast.lo?rise:fall);
- amaLast.mid+=(Math.min(1,mid)-amaLast.mid)*(mid>amaLast.mid?rise:fall);
- amaLast.hi+=(Math.min(1,hi)-amaLast.hi)*(hi>amaLast.hi?rise:fall);
- const s=amaGlow.style;s.setProperty("--bgLo",amaLast.lo.toFixed(3));
- s.setProperty("--bgMid",amaLast.mid.toFixed(3));s.setProperty("--bgHi",amaLast.hi.toFixed(3))}
+function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0} /* rAF loop cancelled when the overlay closes */
+ if(amaDbg){amaDbg.remove();amaDbg=null} /* temporary debug readout goes away with the overlay */
+ if(mesh){const w=mesh.parentNode;if(w&&w.classList&&w.classList.contains("bg-pulse"))w.style.removeProperty("--bg-bass")}
+ amaBass=0;amaStop()}
 /* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
 function shLiveLow(){const x=shRawLow();if(x>=0)return x;const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
  const n=an.frequencyBinCount,buf=shLiveLow.b&&(shLiveLow.b.length===n)?shLiveLow.b:(shLiveLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
