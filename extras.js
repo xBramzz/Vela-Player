@@ -141,7 +141,7 @@ function shArt(v){const img=$( "cover").querySelector("img");if(img&&img.src){(v
  if(SHC){if(img&&img.src){SHC.src=img.src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}}
 function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
- if(v){SH.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
+ if(v){SH.classList.remove("lsh-out");document.body.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
   $("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;
   /* pause ALL background painting while fullscreen — the shower covers everything, so the
      waveform canvas + embers are pure wasted GPU work behind it (this was the flicker/lag) */
@@ -154,7 +154,10 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
   document.documentElement.dataset.shInit="0";
   setTimeout(()=>{shTick(true);const el=SHB.children[Math.max(shIdx,0)];if(el)SHB.scrollTop=Math.max(0,el.offsetTop-SHB.clientHeight/3);document.documentElement.dataset.shInit="1";$("lshClose").focus()},60)}
  else{if(SH.hidden)return;shFsOff();
-  if(!lite){SH.classList.add("lsh-out");setTimeout(()=>{SH.classList.remove("lsh-out");SH.hidden=true},300)}else SH.hidden=true;
+  /* close: fade out ONLY the root overlay element with one opacity transition — no child of the
+     overlay gets its style touched (the old code put .lsh-out on SH itself and also relied on a
+     keyframe animation; both could leave the left column stuck at opacity 0). */
+  if(!lite){R.classList.add("lsh-out");setTimeout(()=>{R.classList.remove("lsh-out");SH.hidden=true},320)}else SH.hidden=true;
   document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}
@@ -164,6 +167,11 @@ function shUI(){if(SH.hidden)return;
  const playing=!a.paused&&!a.ended;
  $("lshPlayIcon").innerHTML=playing?'<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>':'<path d="M8 5v14l11-7z"/>';
  $("lshPlay").setAttribute("aria-label",playing?"Pause":"Play")}
+/* FIX 1b (left column invisible): shSync used to run whenever the main-app #title/#artist text
+   changed — even while the shower was ALREADY open. Re-applying SH.hidden=false / re-rendering on
+   top of an open overlay restarted its entrance animation from opacity:0 (the "flash then gone"
+   symptom). Now a track change while open only updates CONTENT (cover src, title, artist, time,
+   play/pause icon) — the left column itself is static markup in index.html and is never removed. */
 function shSync(){if(!SH.hidden){$("lshTitle").textContent=$("title").textContent;$("lshArtist").textContent=$("artist").textContent;shArt(shBgTop);shBgTop=!shBgTop;shRender();shUI()}}
 $("lshClose").onclick=()=>shOpen(false);
 $("lshPlay").onclick=()=>{a.paused?a.play().catch(()=>{}):a.pause()};
