@@ -32,6 +32,8 @@ function setTheme(h,s){
   S.setProperty("--tint-soft",hsl(h,.8,.45)+" / .25");S.setProperty("--glow",hsl(h,.8,.5)+" / .4");S.setProperty("--glow-hi",hsl(h,.9,.6)+" / .8");
 }
 function clearTheme(){lastHue=null;for(const k of POOL_KEYS.concat(["--wave-lo","--wave-mid","--wave-hi","--wave-glow"]))S.removeProperty(k)}
+/* exposed for the full-screen mesh background: current cover hue/sat (or null on the classic theme) */
+window.__detuneTheme=()=>lastHue==null?null:{h:lastHue,s:.7};
 function sync(){tb.setAttribute("aria-pressed",on);if(!on){R.classList.remove("cover-theme");clearTheme();return}
  const img=$("cover").querySelector("img");if(!img){clearTheme();R.classList.remove("cover-theme");return}
  const go=()=>{try{const r=dominant(img);if(!r)setTheme(355,.15);else setTheme(r.h,Math.max(.35,Math.min(1.1,r.s/.7)));R.classList.add("cover-theme")}catch(e){console.warn("Cover colour failed",e)}};
@@ -137,8 +139,62 @@ function shScrollTo(el){if(!el)return;SHB.scrollTo({top:Math.max(0,el.offsetTop-
 function shTick(force){if(!synced||!lines.length||SH.hidden)return;const t=a.currentTime+.25;let i=-1;for(let k=0;k<lines.length;k++){if(lines[k].t<=t)i=k;else break}
  if(i===shIdx&&!force)return;SHB.children[shIdx]?.classList.remove("on");shIdx=i;const el=SHB.children[i];if(!el)return;el.classList.add("on");shDepth();
  if(Date.now()>shHold)shScrollTo(el)}
+/* ---------- Apple-Music-style MOVING MESH BACKGROUND (full-screen lyric shower) ----------
+   5 dominant colours sampled from the current cover → huge blurred blobs drifting on their own
+   lissajous paths, pulsing with the LOW band of the track. Only transform/opacity are animated;
+   the rAF loop runs ONLY while the overlay is open and never touches layout, so it can't affect
+   the left column or the lyrics. Respects prefers-reduced-motion (static blobs, no pulse). */
+const reduceMotion=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SHBG=SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=null,meshB=0,meshT=0;
+/* HSL -> "r g b" triple for CSS rgb(var(--c)/alpha) */
+const hslRGB=(h,s,l)=>{h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.max(0,Math.min(1,l));
+ const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return `${f(0)} ${f(8)} ${f(4)}`};
+/* sample the cover on a tiny 32x32 canvas and pick up to 5 distinct, saturated hues */
+function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return null;const c=document.createElement("canvas");c.width=c.height=32;
+ const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(img,0,0,32,32);const d=x.getImageData(0,0,32,32).data;
+ const px=[];for(let i=0;i<d.length;i+=4){const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
+  if(df<.12||l<.12||l>.94)continue;let h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360;px.push({h,s:df,l})}
+ if(px.length<6)return null;const bins={};for(const p of px){const k=(p.h/30)|0;const e=bins[k]||(bins[k]={w:0,h:0,l:0,n:0});e.w+=p.s;e.h+=p.h*p.s;e.l+=p.l;p.n}
+ const cand=Object.values(bins).filter(e=>e.w>0).map(e=>({h:e.h/e.w,s:Math.min(1,e.w/(px.length*.35)+.35),l:Math.min(.72,Math.max(.34,e.l/(e.n||1)+.1))}))
+  .sort((a,b)=>b.s-a.s);const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.abs(((c0.h-o.h+540)%360)-180)>42))out.push(c0)}
+ while(out.length<4&&cand.length)out.push(cand[out.length]);return out.length?out:null}catch(e){return null}}
+/* fallback: classic blood-red theme palette (or the live cover-theme hue) */
+function meshFallback(){const th=window.__detuneTheme&&window.__detuneTheme();const base=th?th.h:352,d=th?Math.max(.5,th.s):.8;
+ return[{h:base,s:d,l:.42},{h:base+26,s:d*.9,l:.32},{h:base-24,s:d,l:.5},{h:base+150,s:d*.45,l:.26},{h:base+8,s:d*.8,l:.58}]}
+const MPOS=[[50,42],[22,24],[80,28],[26,76],[78,72]],MSZ=["72vmax","64vmax","60vmax","76vmax","58vmax"],
+ MF=[{a:.30,b:.22,c:.16,d:.26},{a:.24,b:.34,c:.22,d:.14},{a:.34,b:.18,c:.12,d:.28},{a:.2,b:.28,c:.32,d:.18},{a:.28,b:.22,c:.26,d:.32}];
+const meshSpd=b=>.55+(+b.dataset.t||0)*.05; /* per-blob base speed (dataset.t is a random 0..20 offset) */
+function meshBuild(){if(!SHBG)return null;const m=document.createElement("div");m.className="lsh-mesh";m.setAttribute("aria-hidden","true");
+ const img=$("cover").querySelector("img"),cols=meshColors(img)||meshFallback();
+ cols.slice(0,5).forEach((c0,i)=>{const b=document.createElement("div");b.className="lsh-blob";
+  b.style.setProperty("--c",hslRGB(c0.h,c0.s,c0.l));b.style.setProperty("--x",MPOS[i][0]+"%");b.style.setProperty("--y",MPOS[i][1]+"%");
+  b.style.setProperty("--sz",MSZ[i]);b.dataset.i=i;b.dataset.t=(Math.random()*20).toFixed(2);b.dataset.ph=(Math.random()*6.283).toFixed(2);m.append(b)});
+ return m}
+function meshSet(v){const n=meshBuild();if(!n)return;const o=mesh;mesh=n;
+ if(o&&reduceMotion)o.remove();else if(o)n.classList.add("lsh-mesh-in"); /* ~1s crossfade of the colour set */
+ SHBG.prepend(n);if(reduceMotion&&o)setTimeout(()=>o.remove(),1100);
+ if(reduceMotion||lite){meshStop();return}meshStart()}
+function meshLow(){/* average of the lowest analyser bins ≈ 20–120 Hz — reuses fx.js's existing
+ analysers (DetuneFX.analyser / .analyserB during a crossfade); creates nothing, changes no sound */
+ const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
+ const n=an.frequencyBinCount,buf=meshLow.b&&(meshLow.b.length===n)?meshLow.b:(meshLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
+ const hz=an.context.sampleRate/an.fftSize;let s=0,c=0;for(let i=Math.max(1,(20/hz)|0);i<=Math.min(n-1,(120/hz)|0);i++){s+=buf[i];c++}
+ return c?s/c/255:0}
+function meshStop(){if(meshRaf){cancelAnimationFrame(meshRaf);meshRaf=0}meshPrev=null;meshB=0;if(mesh)mesh.style.removeProperty("--lshBass")}
+function meshStart(){if(meshRaf||!mesh||reduceMotion||lite)return;let last=performance.now(),acc=0;
+ const step=t=>{meshRaf=requestAnimationFrame(step);let dt=(t-last)/1000;last=t;if(!(dt>0)||dt>.25)dt=.016;
+  if(document.hidden)return;acc+=dt;if(acc<.033)return;acc=0; /* cap at ~30 updates/s — plenty for slow drift */
+  const low=meshLow(),tgt=Math.min(1,Math.max(0,(low-.18)/.5));meshB=tgt>meshB?meshB+(tgt-meshB)*.55:meshB+(tgt-meshB)*.07; /* fast attack, slow release */
+  mesh.style.setProperty("--lshBass",meshB.toFixed(3));meshT+=dt*(1+meshB*.7); /* bass speeds the whole drift up (slow breathing, never flashing) */
+  const tt=meshT;for(const b of mesh.children){const i=+b.dataset.i||0,f=MF[i]||MF[0],ph=+b.dataset.ph,sp=meshSpd(b),x=tt*sp;
+   b.style.setProperty("--tx",(Math.sin(x*f.a+ph)*9).toFixed(2)+"%");b.style.setProperty("--ty",(Math.cos(x*f.b+ph*1.7)*8).toFixed(2)+"%");
+   const sc=1+meshB*.25;b.style.setProperty("--sx",sc.toFixed(3));b.style.setProperty("--sy",(sc*(1+.05*Math.sin(x*f.c+ph))).toFixed(3));
+   b.style.opacity=(.62+meshB*.28).toFixed(3)}};
+ meshRaf=requestAnimationFrame(step)}
 function shArt(v){const img=$( "cover").querySelector("img");if(img&&img.src){(v?SHA:SHB2).src=img.src;(v?SHA:SHB2).classList.add("lsh-vis");(v?SHB2:SHA).classList.remove("lsh-vis");shBgTop=v}else{SHA.classList.remove("lsh-vis");SHB2.classList.remove("lsh-vis")}
- if(SHC){if(img&&img.src){SHC.src=img.src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}}
+ if(SHC){if(img&&img.src){SHC.src=img.src;SHC.style.display=""}else{SHC.removeAttribute("src");SHC.style.display="none"}}
+ /* moving mesh background: rebuild (with ~1s crossfade) whenever the cover changes */
+ meshSet(!!(img&&img.src))}
 function shFsOff(){try{if(document.fullscreenElement&&document.exitFullscreen){const p=document.exitFullscreen();if(p&&p.catch)p.catch(()=>{})}}catch{}}
 function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
  if(v){SH.classList.remove("lsh-out");document.body.classList.remove("lsh-out");origLoad();shArt(shBgTop);shBgTop=!shBgTop;
@@ -157,7 +213,7 @@ function shOpen(v){if(v&&!hasTrack())return note("Pick a track first.");
   /* close: fade out ONLY the root overlay element with one opacity transition — no child of the
      overlay gets its style touched (the old code put .lsh-out on SH itself and also relied on a
      keyframe animation; both could leave the left column stuck at opacity 0). */
-  if(!lite){R.classList.add("lsh-out");setTimeout(()=>{R.classList.remove("lsh-out");SH.hidden=true},320)}else SH.hidden=true;
+  if(!lite){R.classList.add("lsh-out");setTimeout(()=>{R.classList.remove("lsh-out");SH.hidden=true;meshStop()},320)}else{SH.hidden=true;meshStop()}
   document.body.style.overflow="";document.body.classList.remove("lyrshow-open");if(shPrev&&document.contains(shPrev))shPrev.focus();
   if(window.DetuneFX){DetuneFX.freeze=false;if(!document.hidden)window.__detuneFxWake&&window.__detuneFxWake()}}
  SH.dispatchEvent(new CustomEvent("detune-shower",{detail:v}))}

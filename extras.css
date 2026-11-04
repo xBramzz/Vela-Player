@@ -26,7 +26,10 @@ html.cover-theme{transition:--blood .6s,--blood-hi .6s,--accent .6s,--focus .6s,
 .lyrtools{display:flex;gap:6px;flex:none}
 .lyrbody{position:relative;flex:1;min-height:0;overflow:auto;text-align:center;padding:32% 8px;overscroll-behavior:contain;-webkit-mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent);scrollbar-width:none}
 .lyrbody::-webkit-scrollbar{display:none}
-.lyr{margin:0;padding:6px 8px;border-radius:10px;font:600 clamp(20px,3vw,30px)/1.3 "Cormorant Garamond",Georgia,serif;color:rgba(244,232,231,.36);transition:color .25s,transform .25s;overflow-wrap:anywhere}
+/* FIX (one-char-per-row lyrics): the lines were being squeezed into min-content columns — force a
+   normal vertical stack with full-width lines that wrap like ordinary text. */
+.lyrbody{display:block!important;width:100%;min-width:0}
+.lyr{display:block;width:100%;min-width:0;margin:0;padding:6px 8px;border-radius:10px;font:600 clamp(20px,3vw,30px)/1.3 "Cormorant Garamond",Georgia,serif;color:rgba(244,232,231,.36);text-shadow:0 1px 10px rgba(0,0,0,.45);background:none!important;white-space:normal;word-break:normal;overflow-wrap:break-word;transition:color .25s,transform .25s}
 .lyr.syn{cursor:pointer}.lyr.syn:hover{color:rgba(244,232,231,.7)}
 .lyr.on{color:#fff;transform:scale(1.04);text-shadow:0 0 18px color-mix(in srgb,var(--blood-hi) 70%,transparent)}
 .lyr.gap{opacity:.5}
@@ -120,16 +123,25 @@ body.lsh-out .lshower{opacity:0}
 /* FIX 2: .lshower-bg used to be z-index:-1, which painted it BEHIND the overlay's own opaque
    background (var(--pool2)) → only a plain dark gradient was visible. Now: bg (z0) < grid (z1)
    < foot/close (z2/3), and the frost sits above the covers at ~60% opacity. */
-.lshower-bg{position:absolute;inset:0;z-index:0!important;overflow:hidden;background:radial-gradient(120% 100% at 50% 30%,color-mix(in srgb,var(--pool2,#2a0308) 92%,black),#070102)}
-.lshower-bg img{position:absolute;inset:-12%;z-index:0;width:124%;height:124%;object-fit:cover;filter:blur(80px) saturate(1.4);transform:scale(1.3);opacity:0;transition:opacity .7s ease}
-.lshower-bg img.lsh-vis{opacity:1}
-/* the drift keyframes must match the requested scale (1.3), otherwise the animation overrode
-   transform:scale(1.3) and shrank/blurred the cover differently than specified */
-html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infinite alternate}
-@keyframes lshDrift{from{transform:scale(1.3) translate(-1.5%,1%)}to{transform:scale(1.42) translate(1.5%,-1%)}}
+.lshower-bg{position:absolute;inset:0;z-index:0!important;overflow:hidden;background:#070102}
+/* ---- Apple-Music-style MOVING MESH GRADIENT (replaces the old static blurred cover) ----
+   extras.js extracts 5 dominant colours from the cover and paints them as huge blurred blobs
+   (.lsh-blob) that drift on their own paths. The rAF loop writes only transform/opacity vars
+   (--tx/--ty/--sx/--sy/--br per blob, --lshBass on the container); nothing here ever touches
+   layout properties, so the left column and lyrics are unaffected. */
+.lsh-mesh{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;contain:paint}
+.lsh-blob{position:absolute;left:var(--x);top:var(--y);width:var(--sz);height:var(--sz);border-radius:50%;background:radial-gradient(circle at 50% 50%,rgb(var(--c)/.85) 0%,rgb(var(--c)/.45) 42%,transparent 70%);filter:blur(96px) saturate(1.35);mix-blend-mode:screen;will-change:transform;transform:translate3d(var(--tx,-50%),var(--ty,-50%),0) scale(var(--sx,1));opacity:.72}
+html:not(.lite) .lsh-blob:nth-child(odd){filter:blur(112px) saturate(1.3)}
+html:not(.lite) .lsh-blob:nth-child(even){filter:blur(84px) saturate(1.45)}
+/* track change = new colour set fades in over ~1s on top of the old one, then old is removed */
+.lsh-mesh-in{animation:lshMeshIn 1s ease forwards}
+@keyframes lshMeshIn{from{opacity:0}to{opacity:1}}
+/* bass pulse: brightness lift + slight global swell, driven by --lshBass (0..1, smoothed) */
+.lsh-mesh::after{content:"";position:absolute;inset:-20%;background:radial-gradient(120% 100% at 50% 55%,rgba(255,255,255,.05),transparent 60%);opacity:calc(var(--lshBass,0) * .9);transition:opacity .18s linear;pointer-events:none}
+.lshower-bg img{display:none!important} /* old static blurred-cover layer is retired */
 /* FIX 2: dark RED gradient at ~60% opacity (was an almost-opaque black wash → the background
    read as a plain dark gradient). The blurred cover colours now show straight through it. */
-.lshower-frost{position:absolute;inset:0;z-index:1;background:linear-gradient(160deg,color-mix(in srgb,var(--blood-dk,#6b0912) 85%,transparent) 0%,color-mix(in srgb,var(--blood,#c4182a) 55%,transparent) 45%,color-mix(in srgb,var(--pool2,#2a0308) 90%,transparent) 100%),radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--blood) 26%,transparent),transparent 60%)}
+.lshower-frost{position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(4,1,2,.34) 0%,rgba(4,1,2,.16) 45%,rgba(4,1,2,.44) 100%)}
 .lshower-close{position:absolute;top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));z-index:3;width:44px;height:44px;border-radius:50%;backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.18)!important;color:#fff!important;font-size:16px;opacity:.7;transition:background .2s,transform .2s,opacity .2s}
 /* FIX 3: kill the app-wide `button:focus-visible{outline:3px solid var(--focus)}` ring — the
    overlay focuses this button on open, which put a bright red halo around the X. Hover state
@@ -140,7 +152,7 @@ html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infin
 /* ---- two-column Apple-Music layout: LEFT = artwork + meta + slim controls (~40%), RIGHT = lyrics (~60%) ---- */
 /* z-ORDER inside the overlay: background layers stay BELOW, both columns sit ABOVE them.
    (.lshower-bg = 0, .lshower-frost = 1, grid = 2, left/lyrics columns = 3, foot = 4, close X = 5) */
-.lshower-bg{z-index:0!important}
+.lshower-bg{z-index:0!important} /* mesh blobs live inside this layer — always behind everything */
 .lshower-frost{z-index:1!important}
 .lshower-grid{z-index:2!important}
 .lshower-main,.lshower-body{z-index:3!important}
@@ -166,7 +178,12 @@ html:not(.lite) .lshower-bg img.lsh-vis{animation:lshDrift 26s ease-in-out infin
 body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!important}
 /* FINAL SAFETY OVERRIDE — nothing may hide the two columns while the overlay is open.
    Background layers stay at z-index 0/1 (.lshower-bg/.lshower-frost), the columns sit above them. */
-.lshower .lshower-main,.lshower .lshower-body{position:relative;z-index:2;opacity:1!important;visibility:visible!important;display:flex!important;transform:none!important;pointer-events:auto!important;filter:none!important}
+/* FIX (left column): display is set per-column below — forcing `display:flex!important` on BOTH
+   columns turned `.lshower-body` into a ROW flex container, which squeezed every lyric line into a
+   one-character-wide vertical column. Left column = flex column, lyrics body = block stack. */
+.lshower .lshower-main,.lshower .lshower-body{position:relative;z-index:2;opacity:1!important;visibility:visible!important;transform:none!important;pointer-events:auto!important;filter:none!important}
+.lshower .lshower-main{display:flex!important}
+.lshower .lshower-body{display:block!important}
 /* same guarantee for every element inside the left column (cover, title, artist, progress bar,
    prev / play-pause / next) so no stray rule anywhere in the app can fade it out again */
 .lshower .lshower-main *{opacity:1!important;visibility:visible!important;transform:none!important}
@@ -175,8 +192,8 @@ body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!import
 .lsh-art img{width:100%;height:100%;object-fit:cover;display:block}
 /* entrance for the cover box: REMOVED the `lshArtIn` keyframe (started at opacity:0 with fill-mode
    both — every re-render flashed it back to invisible). Static final state instead. */
-.lsh-name{margin:6px 0 0;max-width:100%;font:700 clamp(20px,2.6vw,34px)/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lsh-sub{margin:2px 0 0;max-width:100%;font:500 clamp(14px,1.4vw,18px)/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lsh-name{margin:6px 0 0;max-width:100%;font:700 clamp(20px,2.6vw,34px)/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none!important;color:#fff;text-shadow:0 2px 18px rgba(0,0,0,.55)}
+.lsh-sub{margin:2px 0 0;max-width:100%;font:500 clamp(14px,1.4vw,18px)/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:rgba(255,255,255,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none!important;text-shadow:0 2px 14px rgba(0,0,0,.5)}
 .lsh-seek{display:flex;align-items:center;gap:10px;width:min(100%,420px);margin-top:8px}
 .lsh-seek span{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums;min-width:38px}
 .lsh-seek #lshCur{text-align:right}
@@ -202,7 +219,7 @@ body.lyrshow-open>*:not(.lshower){opacity:0!important;pointer-events:none!import
 }
 .lshower-body{position:relative;grid-column:2;min-width:0;min-height:0;height:100%;display:block;visibility:visible;opacity:1;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;-webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);padding:28% 24px 60%;text-align:left}
 .lshower-body::-webkit-scrollbar{display:none;width:0;height:0}
-.lshower-body>.lyr{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,3.4vw,52px);line-height:1.32;letter-spacing:-.022em;margin:0;padding:10px 14px;max-width:100%;color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
+.lshower-body>.lyr{display:block;width:100%;min-width:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;font-weight:700;font-size:clamp(26px,3.4vw,52px);line-height:1.32;letter-spacing:-.022em;margin:0;padding:10px 14px;max-width:100%;background:none!important;color:rgba(255,255,255,.28);text-shadow:0 2px 26px rgba(0,0,0,.5);filter:blur(1.4px);transform:translateY(10px) scale(.965);opacity:.55;white-space:normal;word-break:normal;overflow-wrap:break-word;transition:color .45s var(--ease,cubic-bezier(.2,.8,.2,1)),transform .55s var(--ease,cubic-bezier(.2,.8,.2,1)),opacity .45s,filter .45s;cursor:pointer;user-select:none}
 .lshower-body>.lyr.gap{min-height:1.4em;pointer-events:none}
 .lshower-body>.lyr:hover{color:rgba(255,255,255,.55);filter:blur(.4px)}
 .lshower-body>.lyr.on{color:#fff;filter:none;opacity:1;transform:none;text-shadow:0 4px 34px color-mix(in srgb,var(--blood-hi,#ff3b47) 55%,rgba(0,0,0,.6))}
