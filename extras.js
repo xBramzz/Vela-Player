@@ -1,13 +1,19 @@
 /* Detune extras: album-cover colour theme + lyrics (LRC / plain text). Standalone; only reads the DOM and the <audio> element. */
 (()=>{"use strict";
 const $=id=>document.getElementById(id),R=document.documentElement,a=$("audio"),lite=R.classList.contains("lite");
+/* FIX (whole overlay dead): every getElementById below can return null — renamed/removed markup or an
+   older cached index.html. Bare `.textContent` / `.onclick` / `.observe()` on a null element threw at
+   LOAD time inside this IIFE, killing extras.js before the L keydown handler was ever registered.
+   el() returns a live getter (so a later DOM swap is still found) and nul() is a no-op stand-in that
+   silently swallows any property access/call — nothing can throw anymore. */
+const el=id=>{const g=()=>$(id);g.then=g.bind(g);return g},nul=new Proxy(function(){},{get:t=>nul,apply:()=>nul,set:()=>true});
 /* fx.js owns the reactive spin animation (.playing .cover). If it never initialised (offline
    cache miss / older shell version), mark <html> so CSS falls back to a plain always-spin. */
 if(!window.DetuneFX)setTimeout(()=>{if(!window.DetuneFX)R.classList.add("no-fx")},1200);
 const LS={get:k=>{try{return localStorage.getItem(k)}catch{return null}},set:k=>v=>{try{localStorage.setItem(k,v);return true}catch{return false}},del:k=>{try{localStorage.removeItem(k)}catch{}}};
-function note(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(note.t);note.t=setTimeout(()=>t.style.display="none",3000)}
+function note(m){const t=$("toast")||nul;if(!t.textContent&&t!==nul)return;t.textContent=m;t.style.display="block";clearTimeout(note.t);note.t=setTimeout(()=>t.style.display="none",3000)}
 /* ---------- cover theme ---------- */
-const tb=$("themeBtn"),S=R.style;let on=LS.get("detune-cover-theme")==="1";
+const tb=el("themeBtn")||nul,S=R.style;let on=LS.get("detune-cover-theme")==="1";
 function dominant(img){const c=document.createElement("canvas");c.width=c.height=32;const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(img,0,0,32,32);const d=x.getImageData(0,0,32,32).data,bins=new Float32Array(36);let tw=0,ts=0;
  for(let i=0;i<d.length;i+=4){const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;if(df<.08)continue;
   let h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360;const w=df*(1-Math.abs(2*l-1))+.001;bins[(h/10)|0]+=w;tw+=w;ts+=w*df/(1-Math.abs(2*l-1)+.001)}
