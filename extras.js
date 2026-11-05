@@ -192,7 +192,7 @@ const SHBG=SH&&SH.querySelector(".lshower-bg");let mesh=null,meshRaf=0,meshPrev=
    it just had no data source. FIX: never cache the graph; re-read window.DetuneApp.audioGraph live
    EVERY call (the retry block below picks it up within ~1.5 s of app.js publishing it, even if you
    opened the overlay before playback started). */
-let shCtx=null,shAnalyser=null,shBuf=null,shSrcList=[],shTap=null,shWired=false,shWiredAt=0,shRun=false,shRaf=0,shResumeBound=false;
+let shCtx=null,shAnalyser=null,shBuf=null,shSrcList=[],shTap=null,shXtap=null,shXsrc=null,shWired=false,shWiredAt=0,shRun=false,shRaf=0,shResumeBound=false;
 function shWire(){
  const G=window.DetuneApp&&DetuneApp.audioGraph;const AC=window.AudioContext||window.webkitAudioContext;
  if(!G||!G.ctx||!AC||!G.master)return false; /* read LIVE — never a stale load-time snapshot */
@@ -250,11 +250,11 @@ let shAvg=0,shOut=0,shLast=0;
    createMediaElementSource again (#audio stays bound once, in app.js) and with
    connectSpeakers:false AMA never reaches ctx.destination, so output is neither doubled nor
    altered. useCanvas:false → data only, nothing painted, but getEnergy() still updates per frame. */
-let ama=null,amaRawBass=0,amaBass=0,amaSink=null,amaDbg=null;
+let ama=null,amaRawBass=0,amaBass=0,amaAvg=0,amaPrev=0,amaPk=0,amaFm=0,amaHitT=0,amaSink=null,amaDbg=null,amaGlow=null;
 function amaBuild(){if(ama)return true;if(typeof window.AudioMotionAnalyzer!=="function")return false;
  const G=window.DetuneApp&&DetuneApp.audioGraph;if(!G||!G.ctx||!G.master)return false;
  try{
-  ama=new AudioMotionAnalyzer({source:G.master,audioCtx:G.ctx,connectSpeakers:false,useCanvas:false,smoothing:.6});
+   ama=new AudioMotionAnalyzer({source:G.master,audioCtx:G.ctx,connectSpeakers:false,useCanvas:false,smoothing:.25});
   /* belt & braces: if any code path ever routes AMA's output somewhere, send it into a ZERO-GAIN
      sink (never ctx.destination) → guaranteed silence / no echo / no double audio */
   try{amaSink=G.ctx.createGain();amaSink.gain.value=0;ama.connectOutput(amaSink)}catch{}
@@ -267,44 +267,40 @@ function amaStart(){if(!ama||ama.isDestroyed||ama._started)return;try{ama.toggle
 function amaStop(){if(ama&&!ama.isDestroyed){try{ama.toggleAnalyzer(false);ama._started=false}catch{}}} /* keep instance for cheap reopen */
 function amaKill(){amaStop();if(ama&&!ama.isDestroyed){try{ama.disconnectInput();if(amaSink)ama.disconnectOutput(amaSink);ama.destroy()}catch{}}ama=null;amaSink=null;amaRawBass=0;amaBass=0}
 /* temporary DEBUG readout (bottom-left): raw vs smoothed bass from AudioMotion */
-function amaDbgMake(){if(amaDbg||!document.body)return;const d=document.createElement("div");d.id="ama-dbg";d.setAttribute("aria-hidden","true");
- d.textContent="bass raw -- · smooth --";document.body.append(d);amaDbg=d}
+function amaDbgMake(){if(amaDbg||!SH)return;const d=document.createElement("div");d.id="ama-dbg";d.setAttribute("aria-hidden","true");
+ d.style.cssText="position:fixed;left:12px;bottom:12px;z-index:2147483647;font:12px/1.4 ui-monospace,Consolas,monospace;color:#fff;background:rgba(0,0,0,.6);padding:4px 8px;border-radius:6px;pointer-events:none";
+ d.textContent="bass raw -- · smooth --";SH.append(d);amaDbg=d}
 function amaDbgStep(){if(!amaDbg)return;amaDbg.textContent="bass raw "+(ama?amaRawBass.toFixed(3):"--")+" · smooth "+amaBass.toFixed(3)+(ama?"":" · AMA not built")}
 function shBassStep(t){
  if(!shRun)return;shRaf=requestAnimationFrame(shBassStep);
  let dt=(t-shLast)/1000;shLast=t;if(!(dt>0)||dt>.25)dt=1/60;
  if(document.hidden){return}
  if(performance.now()-shWiredAt>1500)shWire();
- amaBuild();amaStart(); /* re-attempt EVERY frame while open — the graph may be published late (see shWire note);
-   both are no-ops once the instance exists and is running, so they cost nothing after the first success */
+ amaBuild();amaStart();
  const x=shRawLow();
- if(x<0){shAvg+=(0-shAvg)*(1-Math.exp(-dt/1));shOut+=(0-shOut)*(1-Math.exp(-dt/.35))}
- else{
-  shAvg+=(x-shAvg)*(1-Math.exp(-dt/1));                      /* ~1 s running average = "loudness floor" */
-  const boost=1+.9*Math.min(1,shAvg*4);                      /* quiet tracks get more gain, loud ones less */
-  const dyn=Math.min(1,Math.max(0,(x-shAvg*boost)/(.10*boost))); /* the KICK component only */
-  const k=Math.min(1,Math.max(0,dyn*.92+x*.08));
-  shOut+=(k-shOut)*(k>shOut?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)))} /* fast attack / slow release */
- /* AUDIO MOTION BASS → --bg-bass ON .bg-pulse ONLY (priority 1 of this feature).
-    raw = analyzer.getEnergy("bass") (preset 20–250 Hz), then ONE-POLE SMOOTHING WITH
-    FAST ATTACK (~50 ms) / SLOW RELEASE (~350 ms). Fallback = our own kick follower (shOut)
-    until the analyzer exists (graph published late / script missing). */
- if(ama&&!ama.isDestroyed){try{amaRawBass=+ama.getEnergy("bass")||0}catch{amaRawBass=0}}else amaRawBass=0;
- const src=ama?amaRawBass:shOut;
- amaBass+=(src-amaBass)*(src>amaBass?(1-Math.exp(-dt/.05)):(1-Math.exp(-dt/.35)));
- const bgVal=ama?amaBass:shOut;
- if(mesh){const w=mesh.parentNode;/* .bg-pulse — the ONLY element we write --bg-bass on; children inherit it */
-  if(w&&w.classList&&w.classList.contains("bg-pulse"))w.style.setProperty("--bg-bass",bgVal.toFixed(3))}
- amaDbgStep()} /* temporary debug readout */
+ let am=0;if(ama&&!ama.isDestroyed){try{am=+ama.getEnergy(40,150)||0}catch{am=0}}
+ amaRawBass=Math.max(x<0?0:x,am);
+ /* auto-gain: loudest recent bass level (slow decay), hits are measured against it */
+ amaPk=Math.max(amaRawBass,amaPk*Math.exp(-dt/4));
+ const n=amaRawBass/Math.max(.12,amaPk);
+ amaAvg+=(n-amaAvg)*(1-Math.exp(-dt/.18));
+ const rise=n-amaAvg;
+ amaBass*=Math.exp(-dt/.16);
+if(rise>.15&&t-amaHitT>70&&amaRawBass>.03){amaHitT=t;amaBass=Math.min(1,.40+rise*1.2)}
+ const v=amaBass.toFixed(3);
+ if(mesh){const sp=mesh.firstElementChild;if(sp)sp.style.setProperty("--lshBass",v);const w=mesh.parentNode;if(w)w.style.setProperty("--bg-bass",v)}
+ if(SHA)SHA.style.setProperty("--bg-bass",v);
+ if(SHB2)SHB2.style.setProperty("--bg-bass",v);
+ amaDbgStep()}
 function shBassStart(){amaDbgMake();if(shRun)return;shRun=true;shWire();amaBuild();amaStart();shLast=performance.now();shRaf=requestAnimationFrame(shBassStep);
  /* DIAGNOSTIC (temporary — remove after verifying): proves the rAF loop is actually running.
     Type in console: DetuneAMA.loop()  → must print "alive @ <timestamp>" every second while open.
     If it prints "DEAD", nothing below can possibly move and we look upstream instead. */
  try{window.DetuneAMA&&Object.assign(DetuneAMA,{loop:()=>{console.log(shRun?"alive @ "+Math.round(performance.now()):"DEAD");clearInterval(DetuneAMA._lp);DetuneAMA._lp=setInterval(()=>console.log("bass-loop alive @ "+Math.round(performance.now())+" · wired:"+!!shAnalyser+" · kick:"+shOut.toFixed(3)+" · ama:"+(!!ama&&ama.isOn)),1000)}})}catch(e){}}
-function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0} /* rAF loop cancelled when the overlay closes */
- if(amaDbg){amaDbg.remove();amaDbg=null} /* temporary debug readout goes away with the overlay */
+function shBassStop(){shRun=false;if(shRaf){cancelAnimationFrame(shRaf);shRaf=0}
+ if(amaDbg){amaDbg.remove();amaDbg=null}
  if(mesh){const w=mesh.parentNode;if(w&&w.classList&&w.classList.contains("bg-pulse"))w.style.removeProperty("--bg-bass")}
- amaBass=0;amaStop()}
+ amaBass=0;amaAvg=0;amaPrev=0;amaPk=0;amaFm=0;amaHitT=0;amaStop()}
 /* legacy helper kept for the drift loop below: our own value first, fx.js's node only as a fallback */
 function shLiveLow(){const x=shRawLow();if(x>=0)return x;const FX=window.DetuneFX;if(!FX)return 0;const an=(window.__detuneXfade&&FX.analyserB)?FX.analyserB:FX.analyser;if(!an)return 0;
  const n=an.frequencyBinCount,buf=shLiveLow.b&&(shLiveLow.b.length===n)?shLiveLow.b:(shLiveLow.b=new Uint8Array(n));an.getByteFrequencyData(buf);
@@ -314,21 +310,71 @@ const hslRGB=(h,s,l)=>{h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.ma
  const f=n=>{const k=(n+h/30)%12,a=s*Math.min(l,1-l);return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return `${f(0)} ${f(8)} ${f(4)}`};
 /* sample the cover on a tiny 32x32 canvas and pick up to 5 REAL dominant colours (bucketed
    averaging over hue AND lightness — grayscale covers keep their grays, no hue shifting). */
-function meshColors(img){try{if(!img||!img.complete||!img.naturalWidth)return null;const c=document.createElement("canvas");c.width=c.height=32;
- const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(img,0,0,32,32);const d=x.getImageData(0,0,32,32).data; /* SecurityError if tainted → neutral fallback */
- const px=[];for(let i=0;i<d.length;i+=4){if(d[i+3]<128)continue;const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
-  let h=0;if(df>.04){h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h=(h*60+360)%360}else l<.04||l>.96?h=-1:h=-1; /* achromatic → hue bucket -1 (grays) */
-  px.push({r,g,b,h,s:df,l})}
- if(px.length<6)return null;const bins={};for(const p of px){const k=p.s<=.04?"A":String((p.h/30)|0)+(p.l<.34?"L":p.l<.67?"M":"H");const e=bins[k]||(bins[k]={r:0,g:0,b:0,n:0});e.r+=p.r;e.g+=p.g;e.b+=p.b;e.n++}
- const cand=Object.values(bins).filter(e=>e.n>=2).map(e=>{const r=e.r/e.n,g=e.g/e.n,b=e.b/e.n,mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;let s=df/(1-Math.abs(2*l-1)||1);s=Math.min(1.2,s*1.2);return{r,g,b,l,s,n:e.n}}).sort((a,b)=>b.n-a.n);
- const out=[];for(const c0 of cand){if(out.length>=5)break;if(out.every(o=>Math.hypot(c0.r-o.r,c0.g-o.g,c0.b-o.b)>.17))out.push(c0)}
- while(out.length<4&&cand.length&&out.length<cand.length)out.push(cand[out.length]);
- return out.map(p=>{let{r,g,b}=p;if(p.l>.7){const k=.82;r*=k;g*=k;b*=k}
- /* FIX (right half too grey): saturation boost — push every sampled colour away from the gray axis
-    (keeps hue, kills flat greys) so all five blobs stay rich on BOTH halves of the screen */
- const l2=.299*r+.587*g+.114*b,mx=Math.max(r,g,b),mn=Math.min(r,g,b),k2=Math.min(1.6,.28/Math.max(.0001,mx-mn));
- r=Math.max(0,Math.min(1,l2+(r-l2)*k2));g=Math.max(0,Math.min(1,l2+(g-l2)*k2));b=Math.max(0,Math.min(1,l2+(b-l2)*k2));
- return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`}).length?out.map(p=>[p.r,p.g,p.b]):null}catch(e){return null}}
+function meshColors(img){
+ try{
+  if(!img||!img.complete||!img.naturalWidth)return null;
+  const c=document.createElement("canvas");c.width=c.height=32;
+  const x=c.getContext("2d",{willReadFrequently:true});
+  x.drawImage(img,0,0,32,32);
+  const d=x.getImageData(0,0,32,32).data; /* SecurityError if tainted → caught below → null */
+
+  /* 1. bucket pixels: 12 hues × 3 lightness steps; near-grays get 4 lightness buckets of their own
+        (so a black-and-white cover still yields black / dark gray / light gray / white) */
+  const bins={};let count=0;
+  for(let i=0;i<d.length;i+=4){
+   if(d[i+3]<128)continue;
+   const r=d[i]/255,g=d[i+1]/255,b=d[i+2]/255;
+   const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,df=mx-mn;
+   let k;
+   if(df<=.04)k="A"+Math.min(3,(l*4)|0);
+   else{
+    let h=mx===r?((g-b)/df)%6:mx===g?(b-r)/df+2:(r-g)/df+4;
+    h=(h*60+360)%360;
+    k=((h/30)|0)+(l<.34?"L":l<.67?"M":"H");
+   }
+   const e=bins[k]||(bins[k]={r:0,g:0,b:0,n:0});
+   e.r+=r;e.g+=g;e.b+=b;e.n++;count++;
+  }
+  if(count<6)return null;
+
+  /* 2. average each bucket and rank by size × colourfulness, so a small vivid accent
+        can beat a big dull area (this is what keeps the mesh colourful) */
+  const cand=Object.values(bins).filter(e=>e.n>=2).map(e=>{
+   const r=e.r/e.n,g=e.g/e.n,b=e.b/e.n,mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+   return{r,g,b,l:(mx+mn)/2,score:e.n*(.3+(mx-mn)*2)};
+  }).sort((a,b)=>b.score-a.score);
+
+  /* 3. pick up to 5: strict distinctness first, then relax so the slots still fill */
+  const out=[];
+  for(const th of[.17,.08]){
+   for(const p of cand){
+    if(out.length>=5)break;
+    if(!out.includes(p)&&out.every(o=>Math.hypot(p.r-o.r,p.g-o.g,p.b-o.b)>th))out.push(p);
+   }
+  }
+  if(!out.length)return null;
+
+  /* 4. to "r g b" strings (0–255) for CSS rgb(var(--c) / alpha); real saturation boost
+        (grays stay gray because their channels equal the luminance) */
+  const res=out.map(p=>{
+   let{r,g,b}=p;
+   if(p.l>.7){r*=.82;g*=.82;b*=.82}                    /* tame near-white so the lyrics stay readable */
+   const y=.299*r+.587*g+.114*b,k=1.4;
+   r=Math.max(0,Math.min(1,y+(r-y)*k));
+   g=Math.max(0,Math.min(1,y+(g-y)*k));
+   b=Math.max(0,Math.min(1,y+(b-y)*k));
+   return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`;
+  });
+
+  /* 5. always return 5 colours (MPOS has 5 blob positions): pad with lighter/darker variants */
+  const base=res.length;
+  while(res.length<5){
+   const[r,g,b]=res[res.length%base].split(" ").map(Number),f=res.length%2?.75:1.2;
+   res.push(`${Math.min(255,Math.round(r*f))} ${Math.min(255,Math.round(g*f))} ${Math.min(255,Math.round(b*f))}`);
+  }
+  return res;
+ }catch(e){return null}
+}
 /* ONLY fallback when the canvas is CORS-tainted / unreadable: neutral dark grays (never theme red) */
 function meshFallback(){return["0.10 0.10 0.11","0.16 0.16 0.18","0.07 0.07 0.08","0.22 0.22 0.24","0.12 0.12 0.13"].map(s=>{const [r,g,b]=s.split(" ").map(Number);return`${Math.round(r*255)} ${Math.round(g*255)} ${Math.round(b*255)}`})}
 /* spread across the WHOLE viewport (three of the five sit on the right half) so no side of the
@@ -397,7 +443,7 @@ function meshStart(){if(!mesh||reduceMotion||lite)return;
  shBassStart();
  const step=t=>{meshRaf=requestAnimationFrame(step);let dt=(t-last)/1000;last=t;if(!(dt>0)||dt>.25)dt=.016;
   if(document.hidden)return;acc+=dt;if(acc<.033)return;acc=0; /* cap at ~30 updates/s — plenty for slow drift */
-  meshB=Math.min(1,Math.max(0,shOut)); /* SHARED kick follower — measured ONCE per frame by shBassStep (own analyser, fast attack / slow release) */
+  meshB=Math.min(1,Math.max(0,amaBass)); /* SHARED kick follower — measured ONCE per frame by shBassStep (own analyser, fast attack / slow release) */
   mesh.style.setProperty("--lshBass",meshB.toFixed(3));meshT+=dt*(1+meshB*.7); /* bass speeds the whole drift up (slow breathing, never flashing) */
   spin+=dt*(6+meshB*4);/* deg/s: one turn per 60s baseline (6°/s), up to ~1.67x faster on the kick */mesh.spin=spin;
   const sp0=mesh.querySelector(".lsh-spin");if(sp0)sp0.style.setProperty("--lshSpin",(spin%360).toFixed(2)+"deg");
@@ -516,9 +562,6 @@ SHB.addEventListener("keydown",e=>{if(!synced)return;let n=null;
 a.addEventListener("timeupdate",()=>shTick());a.addEventListener("seeked",()=>shTick(true));
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!SH?.hidden){shOpen(false);e.stopPropagation();return}if(e.key==="Escape"&&!P?.hidden){open(false);return}if(e.target.matches("input,textarea,select")||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key.toLowerCase()==="l"){if(!SH?.hidden){shOpen(false);return}if(SH)shOpen(SH.hidden)}});
 $("shortcuts")?.querySelector("ul")?.insertAdjacentHTML("beforeend","<li><b>L</b> — lyrics</li>");
+window.DetuneAMA={kill:()=>amaKill(),state:()=>({amaLive:!!(ama&&ama.isOn),kick:+shOut.toFixed(3),bass:+amaBass.toFixed(3),wired:!!shAnalyser,graph:!!(window.DetuneApp&&DetuneApp.audioGraph)})};
 load();
 })();
-/* DEBUG-ONLY probe: window.DetuneAMA.bass() → current LOW-band value driving the glow.
-   kill() is hoisted so it's always defined, even if this line somehow runs before amaKill. */
-window.DetuneAMA={kill:()=>amaKill(),bass:()=>amaLast.lo,cover:()=>({art:SHA?getComputedStyle(SHA).getPropertyValue("--bg-bass"):"-",artB:SHB2?getComputedStyle(SHB2).getPropertyValue("--bg-bass"):"-",covLo:+covLo.toFixed(3)}),
- state:()=>({amaLive:!!(ama&&ama.isOn),lo:+amaLast.lo.toFixed(3),kick:+shOut.toFixed(3),wired:!!shAnalyser,glow:!!amaGlow,graph:!!(window.DetuneApp&&DetuneApp.audioGraph)})};

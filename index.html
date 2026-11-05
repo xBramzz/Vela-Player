@@ -192,8 +192,12 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 </section>
 <div class="layout">
 <section class="glass panel library" aria-label="Playlist library">
-<div class="drop" id="drop"><i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i><span>Drop audio files here or</span><button id="browse">browse files</button><span class="small" id="acceptExt">MP3 · WAV</span><input id="files" type="file" accept=".mp3,.wav,.ogg,.flac,.m4a,.aac,.opus,audio/*" multiple hidden></div>
-<div class="libbar"><div class="pl"><select id="playlistSelect" aria-label="Select playlist"></select><button class="secondary icon" id="newPlaylist" title="New playlist" aria-label="New playlist"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><button class="secondary icon" id="renamePlaylist" title="Rename playlist" aria-label="Rename playlist"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button class="secondary icon" id="deletePlaylist" title="Delete playlist" aria-label="Delete playlist"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>
+<div class="drop" id="drop" role="region" aria-label="Add music">
+  <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i>
+  <span>Drop your music here, or <button type="button" id="browse">browse files</button></span>
+  <span class="small" id="acceptExt">MP3 · WAV · FLAC · M4A · OGG</span>
+  <input id="files" type="file" accept=".mp3,.wav,.ogg,.flac,.m4a,.aac,.opus,audio/*" multiple hidden>
+</div><div class="libbar"><div class="pl"><select id="playlistSelect" aria-label="Select playlist"></select><button class="secondary icon" id="newPlaylist" title="New playlist" aria-label="New playlist"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><button class="secondary icon" id="renamePlaylist" title="Rename playlist" aria-label="Rename playlist"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button class="secondary icon" id="deletePlaylist" title="Delete playlist" aria-label="Delete playlist"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>
 <div class="modes"><button class="secondary" id="shuffle" aria-pressed="false">Shuffle: off</button><button class="secondary" id="repeat">Repeat: off</button></div></div>
 <div class="findbar"><label class="search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="search" type="search" placeholder="Search title or artist…" aria-label="Search playlist"></label><button class="secondary icon" id="clearSearch" title="Clear search and filters" aria-label="Clear search and filters"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
 <select id="viewSelect" aria-label="Library view"><option value="playlist">Playlist</option><option value="favorites">Favorites</option><option value="recent">Recently played</option><option value="most">Most played</option></select>

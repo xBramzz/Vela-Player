@@ -14,7 +14,7 @@ const clamp = C.clamp;
 const DB_NAME = "detune-library", DB_VERSION = 2, STORE = "tracks", META = "meta";
 let db = null;
 let tracks = [];                       // source of truth for the library
-let playlists = [{ id: "default", name: "My graveyard", trackIds: [] }];
+let playlists = [{ id: "default", name: "Playlist #1", trackIds: [] }];
 let activePlaylist = "default";
 let settings = { ...C.DEFAULT_SETTINGS };
 let perTrack = {};                     // id -> {cents,tempo} overrides
@@ -695,7 +695,8 @@ async function persistHint() { try { await navigator.storage?.persist?.(); } cat
 async function updateStorage() {
   try {
     const e = await navigator.storage?.estimate?.();
-    $("storage").textContent = e ? `Local storage: ${Math.round((e.usage || 0) / 1048576)} MB used${e.quota ? ` · ~${Math.round(e.quota / 1048576)} MB quota` : ""} · ${tracks.length} tracks · Clearing site data deletes your music.` : "Storage estimate unavailable";
+    $("storage").textContent = e ? `${Math.round((e.usage || 0) / 1048576)} MB${e.quota ? ` of ${Math.round(e.quota / 1048576)} MB` : ""} used · ${tracks.length} tracks` : "Storage unavailable";
+$("storage").title = "Your music is stored in this browser. Clearing site data deletes it.";
     if (e?.quota && e.usage / e.quota > 0.9) say("Storage is almost full. Export a backup soon.");
   } catch { $("storage").textContent = "Storage estimate unavailable"; }
 }
@@ -974,7 +975,7 @@ function wire() {
   $("playlistSelect").onchange = async e => { activePlaylist = e.target.value; await savePlaylists(); scheduleRender(); };
   $("newPlaylist").onclick = async () => { const name = prompt("Name your playlist:"); if (!name?.trim()) return; const p = { id: makeId(), name: name.trim().slice(0, 80), trackIds: [] }; playlists.push(p); activePlaylist = p.id; await savePlaylists(); scheduleRender(); say(`Created playlist “${p.name}”.`); };
   $("renamePlaylist").onclick = async () => { const p = playlist(), name = prompt("Rename playlist:", p.name); if (!name?.trim()) return; p.name = name.trim().slice(0, 80); await savePlaylists(); scheduleRender(); };
-  $("deletePlaylist").onclick = async () => { const p = playlist(); if (p.id === "default") return say("The default playlist cannot be deleted."); if (!confirm(`Delete playlist “${p.name}”? The tracks themselves stay in your library.`)) return; playlists = playlists.filter(x => x !== p); activePlaylist = playlists[0]?.id || "default"; if (!playlists.length) playlists = [{ id: "default", name: "My graveyard", trackIds: [] }]; await savePlaylists(); scheduleRender(); say(`Deleted playlist “${p.name}”.`); };
+  $("deletePlaylist").onclick = async () => { const p = playlist(); if (p.id === "default") return say("The default playlist cannot be deleted."); if (!confirm(`Delete playlist “${p.name}”? The tracks themselves stay in your library.`)) return; playlists = playlists.filter(x => x !== p); activePlaylist = playlists[0]?.id || "default"; if (!playlists.length) playlists = [{ id: "default", name: "Playlist #1", trackIds: [] }]; await savePlaylists(); scheduleRender(); say(`Deleted playlist “${p.name}”.`); };
 
   $("shuffle").onclick = () => { shuffle = !shuffle; $("shuffle").textContent = `Shuffle: ${shuffle ? "on" : "off"}`; $("shuffle").setAttribute("aria-pressed", String(shuffle)); };
   $("repeat").onclick = () => { repeat = repeat === "off" ? "all" : repeat === "all" ? "one" : "off"; $("repeat").textContent = `Repeat: ${repeat}`; };
@@ -1037,7 +1038,7 @@ async function init() {
     stats = await metaGet("stats", stats);
     lyricsStore = await metaGet("lyrics", {});
     for (const t of tracks) { if (!t.id) t.id = makeId(); if (!Number.isFinite(t.duration)) t.duration = 0; if (!Number.isFinite(t.added)) t.added = Date.now(); }
-    if (!Array.isArray(playlists) || !playlists.length) playlists = [{ id: "default", name: "My graveyard", trackIds: tracks.map(t => t.id) }];
+    if (!Array.isArray(playlists) || !playlists.length) playlists = [{ id: "default", name: "Playlist #1", trackIds: tracks.map(t => t.id) }];
     if (!playlists.some(p => p.id === activePlaylist)) activePlaylist = playlists[0].id;
     const referenced = new Set(playlists.flatMap(p => p.trackIds));
     for (const t of tracks) if (!referenced.has(t.id)) playlists[0].trackIds.push(t.id);
