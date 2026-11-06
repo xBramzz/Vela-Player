@@ -15,6 +15,7 @@
        worklet receives 0 (bypassed). The naive rate change IS the shift — applied exactly once.
      Never let both stages apply the same transformation. */
   function computePlayback(settings) {
+    settings = settings || {};
     const cents = clamp(Math.round(settings.cents || 0), -1200, 1200);
     const tempo = clamp(Number(settings.tempo) || 1, 0.5, 2);
     if (settings.link) {
@@ -58,7 +59,8 @@
   function sha256Hex(u8) {
     const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;
     let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
-    const len = u8.length, total = ((len + 9) >> 6 << 6) + 64; // 64-byte blocks incl. 0x80 + 8-byte length
+    /* padded length = smallest multiple of 64 that fits data + 0x80 + 8-byte length (len + 9) */
+    const len = u8.length, total = ((len + 9 + 63) >> 6) << 6;
     const m = new Uint8Array(total); m.set(u8); m[len] = 0x80;
     const bitsHi = Math.floor(len / 2 ** 29), bitsLo = (len * 8) >>> 0;
     const dv = new DataView(m.buffer);
@@ -112,11 +114,11 @@
   ];
   async function detectFormats() {
     const probe = typeof Audio !== "undefined" ? new Audio() : null;
-    const ok = [];
+    const ok = new Set(); // Set: several MIME types map to the same extension (wav, weba)
     for (const [mime, ext] of FORMAT_CANDIDATES) {
-      try { if (probe && probe.canPlayType(mime)) ok.push(ext); } catch { /* ignore */ }
+      try { if (probe && probe.canPlayType(mime)) ok.add(ext); } catch { /* ignore */ }
     }
-    return ok.length ? ok : ["mp3", "wav"];
+    return ok.size ? [...ok] : ["mp3", "wav"];
   }
   function fileAccepted(file, exts) {
     const ext = /\.([a-z0-9]+)$/i.exec(file.name || "");
@@ -198,6 +200,8 @@
   const EQ_FREQS = [60, 170, 350, 1000, 3500, 10000];
   function sanitizeSettings(s) {
     s = (s && typeof s === "object") ? s : {};
+    /* Finite-number-or-default. Unlike `+v || d`, a legitimate 0 is kept (hue 0 = red). */
+    const numOr = (v, d) => (v == null || v === "" || !Number.isFinite(+v)) ? d : +v;
     const out = {
       cents: clamp(Math.round(+s.cents || 0), -1200, 1200),
       tempo: clamp(+s.tempo || 1, 0.5, 2),
@@ -217,7 +221,7 @@
       beatmatch: !!s.beatmatch,
       resume: s.resume === undefined ? true : !!s.resume,
       theme: s.theme === "light" ? "light" : "dark",
-      accentHue: clamp(Math.round(+s.accentHue || 355), 0, 360),
+      accentHue: clamp(Math.round(numOr(s.accentHue, 355)), 0, 360),
       sleepMin: clamp(Math.round(+s.sleepMin || 0), 0, 240),
     };
     return out;
@@ -229,13 +233,13 @@
      about the user's library leaves the browser. ---- */
   const LRCLIB_BASE = "https://lrclib.net/api";
   function lrcClean(s) { return String(s == null ? "" : s).replace(/[\r\n]+/g, " ").trim().slice(0, 200); }
-  function lrcSyncedUrl({ artist, title, duration }) {
-    const p = new URLSearchParams();
+  /* /api/get REQUIRES track_name + artist_name; duration is optional but must be 1–3600 s.
+     Returns null when it can't form a valid request (caller should fall back to lrcSearchUrl). */
+  function lrcSyncedUrl({ artist, title, duration } = {}) {
     const a = lrcClean(artist), t = lrcClean(title);
-    if (a && !/^(unknown|unknown artist)$/i.test(a)) p.set("artist_name", a);
-    if (t) p.set("track_title", t);
-    if (Number.isFinite(duration) && duration > 0) p.set("duration", Math.round(duration));
-    if (!p.has("track_title")) return null; // API requires at least a track title
+    if (!t || !a || /^(unknown|unknown artist)$/i.test(a)) return null;
+    const p = new URLSearchParams({ artist_name: a, track_name: t });
+    if (Number.isFinite(duration) && duration >= 1 && duration <= 3600) p.set("duration", Math.round(duration));
     return `${LRCLIB_BASE}/get?${p.toString()}`;
   }
   function lrcSearchUrl({ artist, title }) {
@@ -270,12 +274,6 @@
     const fs = sr / 8;                                     // decimate ×8 (e.g. 44.1k → 5.5125 kHz)
     const n = Math.floor(win / 8);
     if (n < fs) return null;                               // under one second of audio
-    /* 8× decimation lowpass (~Nyquist/8 ≈ 550 Hz @44.1k) — kills aliasing before downsample */
-    const taps = 17, h = new Float32Array(taps);
-    { let s = 0; const fc = 0.115;
-      for (let i = 0; i < taps; i++) { const x = i - (taps >> 1); h[i] = x === 0 ? 2 * fc : Math.sin(Math.PI * fc * x) / (Math.PI * x); }
-      for (let i = 0; i < taps; i++) { const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (taps - 1)); h[i] *= w; s += h[i]; }
-      for (let i = 0; i < taps; i++) h[i] /= s; }
     const env = new Float32Array(n);
     /* Kick-band envelope: two cascaded one-pole lowpass ≈150 Hz @5.5 kHz (state persists
        across every sample), rectified, RMS per decimated frame, then a DC-blocking HPF so
@@ -314,7 +312,7 @@
       {
         const mm = (() => { let v = 0; for (let i = 0; i < n; i++) if (env[i] > v) v = env[i]; return v; })();
         if (!(mm > 0)) return null;
-        const thr = mm * 0.15, minGap = Math.max(1, Math.round(fs * 60 / 200)); // \u2264200 BPM hits
+        const thr = mm * 0.15, minGap = Math.max(1, Math.round(fs * 60 / 200)); // ≤200 BPM hits
         const thinned = new Float32Array(n);
         let lastPeak = -minGap - 1, runMax = 0, runIdx = -1;
         for (let i = 0; i < n; i++) {
@@ -340,8 +338,9 @@
       const lagMin = Math.max(1, Math.round(fs * 60 / bpmHi));
       const lagMax = Math.min(n - 2, Math.round(fs * 60 / bpmLo));
       if (lagMax - lagMin < 2) return null;
-      /* comb[T] = best-phase hit density of a beat grid with period T samples. */
-      const strength = new Float32Array(lagMax + 1);
+      /* comb[T] = best-phase hit density of a beat grid with period T samples.
+         Float64: later lookups must equal combAt() exactly (Float32 would round them). */
+      const strength = new Float64Array(lagMax + 1);
       let gmax = 0, gLag = 0;
       /* Spike index list — reused by the exact-density scorer and pass-2 histogram. */
       const spikeIdx = [];
@@ -426,21 +425,25 @@
           if (agree > 0.02 && bestCnt >= ivs.length * 0.6) fundamental = bestLag;
         }
       }
-      /* also consider multiples of the fundamental that stay strong (rare) — keep simple:
-         the fundamental IS the answer unless AC says otherwise (pass 2 cross-check). */
-      const ac = new Float32Array(lagMax + 2);
-      for (let lag = lagMin; lag <= lagMax; lag++) {
+      /* Autocorrelation support, computed LAZILY and only for lags the refinement actually
+         touches. `env` is now a 0/1 spike train, so env[i]*env[i+lag] = env[i+lag] and we
+         only need to walk the K spikes instead of all n samples (same value, ~1000× less work). */
+      const acCache = new Float32Array(lagMax + 2).fill(-1);
+      const acAt = (lag) => {
+        if (acCache[lag] >= 0) return acCache[lag];
+        const lim = n - lag;
         let s = 0;
-        for (let i = 0; i + lag < n; i++) s += env[i] * env[i + lag];
-        ac[lag] = s / (n - lag);
-      }
-      /* refine around `fundamental` with parabolic interpolation on the comb curve */
+        for (let k = 0; k < K; k++) { const i = spikeIdx[k]; if (i >= lim) break; s += env[i + lag]; }
+        acCache[lag] = s / lim;
+        return acCache[lag];
+      };
       /* continuous refinement: sweep candidate periods around the fundamental at fine
          resolution and keep the best combined score (comb density × AC support). */
       const suppAt = (T) => {
         const lag = Math.round(T);
-        return (gmax > 0 && lag >= lagMin && lag <= lagMax && ac[lag] > 0)
-          ? 0.5 + 0.5 * Math.min(1, ac[lag] / gmax) : 0.5;
+        if (lag < lagMin || lag > lagMax) return 0.5;
+        const a = acAt(lag);
+        return a > 0 ? 0.5 + 0.5 * Math.min(1, a / gmax) : 0.5;
       };
       let bestT = fundamental, bestScore = strength[fundamental] * suppAt(fundamental);
       /* Refinement window must be SMALLER than the gap to the nearest harmonic/subharmonic
@@ -451,7 +454,8 @@
       const span = Math.max(2, Math.min(Math.round(fundamental * 0.03), Math.round(fs / 3)));
       for (let T = fundamental - span; T <= fundamental + span; T += 0.25) {
         if (T < lagMin || T > lagMax) continue;
-        const s = combAt(Math.round(T)) * suppAt(T);
+        /* strength[] already holds combAt() for every integer lag in range — don't recompute. */
+        const s = strength[Math.round(T)] * suppAt(T);
         if (s > bestScore) { bestScore = s; bestT = T; }
       }
       let bpm = fs * 60 / bestT;
@@ -478,7 +482,7 @@
          decks within maxPct of each other. */
   function planBeatmatch(currentBpm, nextBpm, maxPct = 6) {
     if (!Number.isFinite(currentBpm) || !Number.isFinite(nextBpm) || currentBpm <= 0 || nextBpm <= 0) return null;
-    const lim = clamp(maxPct, 0.5, 25) / 100;
+    const lim = clamp(Number.isFinite(maxPct) ? maxPct : 6, 0.5, 25) / 100;
     let n = nextBpm;
     while (n > currentBpm * 1.12) n /= 2;
     while (n < currentBpm / 1.12) n *= 2;
@@ -524,6 +528,7 @@
 
   /* ---------- repeat/shuffle next-track logic (pure) ---------- */
   function pickNext(ids, currentId, opts) {
+    opts = opts || {};
     if (!ids.length) return null;
     if (opts.nextQueued) return { id: opts.nextQueued, via: "queue" };
     if (opts.shuffle && ids.length > 1) {

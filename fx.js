@@ -5,9 +5,9 @@ const FX=window.DetuneFX={analyser:null,analyserB:null},S={bass:0,mid:0,treb:0,b
 /* During a crossfade the incoming deck (B) becomes the dominant audio — app.js sets
    window.__detuneXfade while ramping so the visualiser follows what you HEAR. */
 const xfadeOn=()=>!!window.__detuneXfade;
-let fd,td,raw,rawPrev,raf=0;
+let fd,td,rawPrev,rawMidPrev,raf=0;
 /* kick detector — the old beat trigger used mean bass energy (30–150Hz), so any loud
-   808/bassline held it lit. Now we analyse a raw (unsmoothed) low band and fire only on a
+   808/bassline held it lit. Now we analyse a low band and fire only on a
    fast transient ONSET whose energy is KICK-DOMINANT (low-band jump >> mid-band jump) with a
    120ms refractory period, then decay exponentially. Sustained bass = no pulses. */
 const kick=(cur,prev,midJump,t)=>{
@@ -18,25 +18,11 @@ const em=document.createElement("canvas");em.className="embers";em.setAttribute(
 const ec=em.getContext("2d"),P=[],fit=()=>{em.width=lite?1:innerWidth;em.height=lite?1:innerHeight};fit();addEventListener("resize",fit);
 const spawn=n=>{if(lite)return;for(let i=0;i<n&&P.length<160;i++)P.push({x:Math.random()*em.width,y:em.height+8,vx:(Math.random()-.5)*.7,vy:-(.5+Math.random()*1.5)*(1+S.bass*1.5),r:1+Math.random()*2.4,a:1,ph:Math.random()*6.28})};
 const norm=x=>Math.min(1,Math.max(0,(x-.28)/.55)),env=(k,v)=>S[k]=v>S[k]?v:S[k]*.88+v*.12,ranges=[...document.querySelectorAll(".range,.progress")];
-function tick(t){raf=0;if(document.hidden||(window.DetuneFX&&DetuneFX.freeze))return;raf=requestAnimationFrame(tick);if(lite&&t-(tick.l||0)<32)return;tick.l=t;
- const an=(xfadeOn()&&FX.analyserB)?FX.analyserB:FX.analyser,playing=R.classList.contains("is-playing");let b=0,m=0,h=0,hz=1;
- if(an){const n=an.frequencyBinCount;if(!fd||fd.length!==n){fd=new Uint8Array(n);td=new Uint8Array(an.fftSize)}if(!raw||raw.length!==n)raw=new Uint8Array(n);an.getByteFrequencyData(fd);an.getByteTimeDomainData(td);hz=an.context.sampleRate/an.fftSize;
-  const band=(lo,hi)=>{let s=0,c=0;for(let i=Math.max(1,lo/hz|0),e=Math.min(n-1,hi/hz|0);i<=e;i++){s+=fd[i];c++}return c?s/c/255:0};b=band(30,150);m=band(300,2500);h=band(4000,14000);
-  /* raw low-band (25–160Hz) and mid-band jump for the kick detector — measured on an
-     unsmoothed second read so transients aren't smeared away by smoothingTimeConstant */
-  an.getByteFrequencyData(raw);
-  const rband=(lo,hi)=>{let s=0,c=0;for(let i=Math.max(1,lo/hz|0),e=Math.min(n-1,hi/hz|0);i<=e;i++){s+=raw[i];c++}return c?s/c/255:0};
-  const rLow=rband(25,160),rMid=rband(200,2000);
-  b=norm(b);m=norm(m);h=norm(h);env("bass",b);env("mid",m);env("treb",h);
-  S.avg=S.avg*.93+b*.07;
-  const prevLow=rawPrev==null?rLow:rawPrev,midPrev=raw._mid==null?rMid:raw._mid;
-  raw._mid=rMid;rawPrev=rLow;
-  kick(rLow,prevLow,Math.max(0,rMid-midPrev),t);
-  if(!reduce&&!lite)for(const k of["bass","mid","treb","beat"])R.style.setProperty("--"+k,S[k].toFixed(3))}
- else{b=m=h=0;S.avg*=.9;rawPrev=null;if(raw)raw._mid=null;kick(0,0,0,t);
-  if(!reduce&&!lite)for(const k of["bass","mid","treb","beat"])R.style.setProperty("--"+k,S[k].toFixed(3))}
+const pub=()=>{if(!reduce&&!lite)for(const k of["bass","mid","treb","beat"])R.style.setProperty("--"+k,S[k].toFixed(3))};
 /* fx.js draws on a canvas where CSS vars can't apply directly — read the (possibly cover-tinted)
-   theme channels here and cache by their computed string, so the waveform matches the album too. */
+   theme channels here and cache by their computed string, so the waveform matches the album too.
+   Hoisted OUT of tick(): previously the cache, the 1x1 canvas and these helpers were re-created every
+   frame, so the cache never hit and getImageData ran 3x per frame. */
 let waveCache="",wave={lo:"rgb(78,5,14)",mid:"rgb(196,24,42)",hi:"rgb(255,170,160)",glow:"rgb(255,59,71)",spark:"rgb(255,232,228)",line:"rgb(255,240,238)"};
 const _cs=getComputedStyle(R);
 /* resolve any CSS colour string (hsl/rgb/hex) to [r,g,b] via a 1x1 canvas */
@@ -48,6 +34,21 @@ function wcol(){const k=_cs.getPropertyValue("--blood")+"|"+_cs.getPropertyValue
  const b=hx(_cs.getPropertyValue("--blood"))||[196,24,42],bh=hx(_cs.getPropertyValue("--blood-hi"))||[255,59,71],ink=hx(_cs.getPropertyValue("--ink"))||[244,232,231];
  wave={lo:rgb(blend(b,[10,0,2],.35)),mid:rgb(b),hi:rgb(blend(bh,ink,.55)),glow:rgb(bh),spark:rgb(blend(ink,[255,255,255],.6)),line:rgb(blend(ink,[255,255,255],.75))};
  return wave}
+function tick(t){raf=0;if(document.hidden||(window.DetuneFX&&DetuneFX.freeze))return;raf=requestAnimationFrame(tick);if(lite&&t-(tick.l||0)<32)return;tick.l=t;
+ const an=(xfadeOn()&&FX.analyserB)?FX.analyserB:FX.analyser,playing=R.classList.contains("is-playing");let b=0,m=0,h=0,hz=1;
+ if(an){const n=an.frequencyBinCount;if(!fd||fd.length!==n){fd=new Uint8Array(n);td=new Uint8Array(an.fftSize)}an.getByteFrequencyData(fd);an.getByteTimeDomainData(td);hz=an.context.sampleRate/an.fftSize;
+  const band=(lo,hi)=>{let s=0,c=0;for(let i=Math.max(1,lo/hz|0),e=Math.min(n-1,hi/hz|0);i<=e;i++){s+=fd[i];c++}return c?s/c/255:0};b=band(30,150);m=band(300,2500);h=band(4000,14000);
+  /* low band (25–160Hz) and mid band for the kick detector. (The old code re-read the analyser into a
+     second array; getByteFrequencyData returns the same data within one render quantum, so fd is reused.) */
+  const rLow=band(25,160),rMid=band(200,2000);
+  b=norm(b);m=norm(m);h=norm(h);env("bass",b);env("mid",m);env("treb",h);
+  S.avg=S.avg*.93+b*.07;
+  const prevLow=rawPrev==null?rLow:rawPrev,midPrev=rawMidPrev==null?rMid:rawMidPrev;
+  rawMidPrev=rMid;rawPrev=rLow;
+  kick(rLow,prevLow,Math.max(0,rMid-midPrev),t);
+  pub()}
+ else{b=m=h=0;S.avg*=.9;rawPrev=rawMidPrev=null;kick(0,0,0,t);
+  pub()}
  /* waveform: log-spaced mirrored spectrum + live oscilloscope line + falling peak caps */
  const cv=$("visual"),r=cv.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,lite?1.5:2),w=Math.max(1,r.width*dpr|0),H=Math.max(1,r.height*dpr|0);
  if(cv.width!==w||cv.height!==H){cv.width=w;cv.height=H}
@@ -66,7 +67,8 @@ function wcol(){const k=_cs.getPropertyValue("--blood")+"|"+_cs.getPropertyValue
  /* embers */
  ec.clearRect(0,0,em.width,em.height);ec.globalCompositeOperation="lighter";if(!reduce&&Math.random()<(playing?.2+S.bass*.8:.04))spawn(1);
  for(let i=P.length-1;i>=0;i--){const p=P[i];p.ph+=.03;p.x+=p.vx+Math.sin(p.ph)*.4;p.y+=p.vy;p.a-=.0035;if(p.a<=0||p.y<-10){P.splice(i,1);continue}ec.fillStyle=`rgba(255,${70+p.a*90|0},70,${p.a*.75})`;ec.beginPath();ec.arc(p.x,p.y,p.r*(1+S.treb),0,6.283);ec.fill()}
- for(const g of ranges){const p=((g.value-g.min)/(g.max-g.min)*100).toFixed(1);if(g._p!==p){g._p=p;g.style.setProperty("--p",p+"%")}}}
+ /* guard: a range/progress with max<=min (e.g. progress before a track loads) gave NaN% and broke the --p gradient */
+ for(const g of ranges){const d=g.max-g.min,p=(d>0?(g.value-g.min)/d*100:0).toFixed(1);if(g._p!==p){g._p=p;g.style.setProperty("--p",p+"%")}}}
 const go=()=>{if(!raf&&!document.hidden&&!(window.DetuneFX&&DetuneFX.freeze))raf=requestAnimationFrame(tick)};document.addEventListener("visibilitychange",go);go();
 /* The full-screen lyric shower sets DetuneFX.freeze while open: the background page is fully
    covered by it, so we stop ALL background painting (waveform canvas, embers, CSS-var writes)
