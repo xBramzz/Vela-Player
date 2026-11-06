@@ -400,3 +400,5 @@ html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
    coverBassStep in extras.js); only the opacity crossfade transition is disabled there. */
 @media(prefers-reduced-motion:reduce){.lsh-bassglow{transform:none;opacity:calc(.18 + var(--bgLo)*.16)}}
 .lite .lsh-bassglow{opacity:calc(.1 + var(--bgLo)*.2)}
+.lshower-main,.lsh-name,.lsh-sub{text-shadow:none}
+.lsh-name,.lsh-sub{text-shadow:0 1px 3px rgba(0,0,0,.25)}
