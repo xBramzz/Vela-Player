@@ -993,3 +993,22 @@ document.addEventListener("keydown", e => {
 }
 safe("initial load", load);
 })();
+let lyrAnim = 0;
+function easeScroll(el, to, ms = 650) {
+  cancelAnimationFrame(lyrAnim);
+  const from = el.scrollTop, d = to - from, t0 = performance.now();
+  if (Math.abs(d) < 1) return;
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / ms);
+    el.scrollTop = from + d * (1 - Math.pow(1 - k, 4)); // ease-out quart
+    if (k < 1) lyrAnim = requestAnimationFrame(step);
+  };
+  lyrAnim = requestAnimationFrame(step);
+}
+/* let the user grab the lyrics without fighting the animation */
+const lyrBody = document.querySelector(".lshower-body");
+["wheel", "touchstart"].forEach(ev => lyrBody.addEventListener(ev, () => cancelAnimationFrame(lyrAnim), { passive: true }));
+
+/* usage, with the same line your code already treats as active */
+const active = lyrBody.querySelector(".lyr.on");
+if (active) easeScroll(lyrBody, active.offsetTop - lyrBody.clientHeight * 0.3);

@@ -265,7 +265,7 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 <div class="lshower" id="lshower" role="dialog" aria-modal="true" aria-label="Full-screen lyrics" hidden>
 <!-- close button is a DIRECT child of the root overlay — no ancestor with transform/filter/
      overflow can clip it; CSS pins it fixed at top:24px right:24px with an inline × glyph -->
-<button class="lshower-close" id="lshClose" title="Close (Esc)" aria-label="Close full-screen lyrics"><span class="lsh-x" aria-hidden="true">×</span></button>
+<!-- <button class="lshower-close" id="lshClose" title="Close (Esc)" aria-label="Close full-screen lyrics"><span class="lsh-x" aria-hidden="true">×</span></button> -->
 <!-- ALL background layers in ONE wrapper: z-index 0, pointer-events none. extras.js injects the
      colour-mesh (.lsh-mesh) at the front of this wrapper; nothing inside ever exceeds z-index 0 -->
 <div class="lshower-bg" aria-hidden="true"><img id="lshArt" alt=""><img id="lshArtB" alt=""><div class="lshower-frost"></div></div>

@@ -402,3 +402,72 @@ html.lite .lshower{-webkit-backdrop-filter:none;backdrop-filter:none}
 .lite .lsh-bassglow{opacity:calc(.1 + var(--bgLo)*.2)}
 .lshower-main,.lsh-name,.lsh-sub{text-shadow:none}
 .lsh-name,.lsh-sub{text-shadow:0 1px 3px rgba(0,0,0,.25)}
+
+/* ===== Apple Music-style Now Playing column — append at the END of the CSS ===== */
+.lshower .lshower-main{--lshCol:min(100%,44vh,440px);gap:0}
+@supports(height:100dvh){.lshower .lshower-main{--lshCol:min(100%,44dvh,440px)}}
+
+/* order: cover → title → artist → bar+times → controls → volume. All share ONE width */
+.lshower .lsh-art{order:1;width:var(--lshCol);height:auto;aspect-ratio:1/1;border-radius:10px;
+  box-shadow:0 22px 60px rgba(0,0,0,.45),0 6px 18px rgba(0,0,0,.3);
+  transform:scale(.86);transition:transform .55s cubic-bezier(.2,.8,.2,1)}
+html.is-playing .lshower .lsh-art{transform:scale(1)} /* paused = slightly smaller, like Apple Music */
+
+.lshower .lsh-name{order:2;width:var(--lshCol);margin:26px 0 0;text-align:left;
+  font:600 22px/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",system-ui,sans-serif}
+.lshower .lsh-sub{order:3;width:var(--lshCol);margin:3px 0 0;text-align:left;color:rgba(255,255,255,.6);
+  font:500 19px/1.25 -apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",system-ui,sans-serif}
+
+.lshower .lsh-seek{order:4;width:var(--lshCol);margin-top:22px;flex-direction:column-reverse;gap:2px} /* times move UNDER the bar */
+.lshower .lsh-ctrls{order:5;width:var(--lshCol);justify-content:space-between;margin-top:18px}      /* shuffle/repeat hug the cover edges */
+.lshower .lsh-vol{order:6;width:var(--lshCol);margin-top:22px}
+.lshower #lshVol{max-width:none;flex:1}                                                              /* slider spans the column */
+
+.lshower .lshower-bg img{filter:blur(70px) brightness(calc(.8 + var(--bg-bass)*.45)) saturate(calc(1.6 + var(--bg-bass)*.9))}
+.lshower .lshower-bg img.lsh-vis{opacity:.85}
+.lshower .lshower-frost{background:radial-gradient(135% 105% at 50% 42%,transparent 55%,rgba(0,0,0,.22) 100%),rgba(0,0,0,.08)}
+/* ===== polish pass: append at the END ===== */
+/* 1. dot no longer shifts the shuffle/repeat glyphs off-centre */
+.lshower .lsh-ctrls>#lshShuffle,.lshower .lsh-ctrls>#lshRepeat{position:relative}
+.lshower .lsh-dot{position:absolute;left:50%;bottom:-2px;margin:0 0 0 -2px}
+
+/* 2. crisp text: faint wide shadow instead of the tight smudge */
+.lshower .lsh-name,.lshower .lsh-sub{text-shadow:0 1px 14px rgba(0,0,0,.18)}
+
+/* 3. tighter rhythm between artist → bar */
+.lshower .lsh-seek{margin-top:14px}
+.lshower .lsh-ctrls{margin-top:14px}
+.lshower .lsh-vol{margin-top:18px}
+
+/* ===== smoother lyrics: append at the END ===== */
+.lshower-body>.lyr{
+  transform-origin:left center;
+  transform:scale(.92);                 /* inactive lines sit slightly smaller, like Apple Music */
+  transition:transform .6s cubic-bezier(.22,1,.36,1),color .45s ease,opacity .45s ease;
+  will-change:transform;
+  text-shadow:none;                     /* the big blurred shadow on every line was a repaint cost */
+}
+.lshower-body>.lyr.on{transform:scale(1);text-shadow:0 2px 20px rgba(0,0,0,.25)}
+/* drop the repaint-heavy sweep (animated custom property + blend mode) */
+html:not(.lite) .lshower-body>.lyr.on{animation:none}
+html:not(.lite) .lshower-body>.lyr.on::after{display:none}
+@media(prefers-reduced-motion:reduce){.lshower-body>.lyr{transform:none;transition:color .3s ease}}
+/* ===== smooth line-to-line highlight: append at the very END (overrides earlier lyric rules) ===== */
+.lshower-body>.lyr{
+  transform-origin:left center;
+  transform:scale(.94);
+  text-shadow:none;
+  /* LEAVING state (line stops being active): slow, soft fade-out */
+  transition:color .75s cubic-bezier(.4,0,.2,1),transform .75s cubic-bezier(.22,1,.36,1);
+  will-change:transform,color;
+}
+.lshower-body>.lyr.on{
+  transform:scale(1);
+  text-shadow:none;
+  /* ENTERING state (line becomes active): slightly quicker ease-in, starts just after the old line begins fading */
+  transition:color .5s cubic-bezier(.22,1,.36,1) .05s,transform .6s cubic-bezier(.22,1,.36,1) .05s;
+}
+/* remove the repaint-heavy light sweep so it can't interrupt the fade */
+html:not(.lite) .lshower-body>.lyr.on{animation:none}
+html:not(.lite) .lshower-body>.lyr.on::after{display:none}
+@media(prefers-reduced-motion:reduce){.lshower-body>.lyr,.lshower-body>.lyr.on{transform:none;transition:color .3s ease}}
