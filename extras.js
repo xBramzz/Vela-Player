@@ -434,11 +434,11 @@ function shRender() {
     const e = document.createElement("div");
     e.className = "lshower-empty";
     const i0 = document.createElement("i");
-    i0.className = "fa-solid fa-microphone-lines";
+    i0.className = "fa-solid fa-align-left";
     const p0 = document.createElement("p");
-    p0.textContent = "No lyrics for this track yet.";
+    p0.textContent = "No lyrics for this track.";
     const s0 = document.createElement("span");
-    s0.textContent = "Import a .lrc file, fetch from LRCLIB, or paste text \u2014 they'll appear here in full screen.";
+    s0.textContent = "Velo Player © 2026.";
     e.append(i0, p0, s0);
     SHB.append(e);
     return;
