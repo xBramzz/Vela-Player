@@ -525,3 +525,8 @@ html.lite .lshower-body>.lyr{filter:none!important}
 .lshower-body>.lyr{font-weight:600}
 .lshower-body>.lyr{letter-spacing:-.005em}
 .lshower-body>.lyr{font-kerning:none;letter-spacing:.004em}
+/* apply to the big cents readout, Hz/st line, tempo box, all times */
+.num, #pv time, .tm {
+  font-variant-numeric: lining-nums tabular-nums;
+  /* fallback: font-feature-settings: "lnum" 1, "tnum" 1; */
+}

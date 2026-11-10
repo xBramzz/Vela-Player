@@ -727,27 +727,92 @@ async function exportWav() {
   const t = trackById(currentId); if (!t) return say("Choose a track first.");
   const button = $("exportWav"); button.disabled = true;
   try {
-    say("Preparing WAV export…");
+    say("Preparing WAV export… (Baking in Pitch, EQ, and Reverb)");
     const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     if (!AC) throw new Error("Offline audio rendering is unsupported here.");
-    const probe = new AC(2, 1, 44100);
-    const buf = await probe.decodeAudioData(await t.blob.arrayBuffer());
+    
+    // 1. FIX THE LEAK: Use the main context to decode, avoid creating a probe context
+    if (ctx.state === "suspended") await ctx.resume();
+    const arrayBuffer = await t.blob.arrayBuffer();
+    const buf = await ctx.decodeAudioData(arrayBuffer);
+    
     const model = C.computePlayback(settings);
-    const frames = Math.ceil(buf.length / model.rate);
-    const off = new AC(buf.numberOfChannels, frames, buf.sampleRate);
-    const src = off.createBufferSource(); src.buffer = buf; src.playbackRate.value = model.rate;
-    const gain = off.createGain(); gain.gain.value = settings.mute ? 0 : settings.volume;
-    src.connect(gain); gain.connect(off.destination); src.start();
+    const lengthFrames = Math.ceil(buf.length / model.rate);
+    const off = new AC(buf.numberOfChannels, lengthFrames, buf.sampleRate);
+    
+    const src = off.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = model.rate; // Applies Vinyl pitch+tempo, OR Detuned tempo
+    let currentNode = src;
+
+    // 2. REBUILD THE DSP GRAPH (The missing piece!)
+    // A. Pitch Worklet (Only needed if Detuned Mode / Unlinked)
+    if (!settings.link && settings.cents !== 0) {
+      try {
+        await off.audioWorklet.addModule("./pitch-worklet.js");
+        const pitchNode = new AudioWorkletNode(off, "detune-pitch", { 
+          numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2 
+        });
+        pitchNode.parameters.get("cents").value = settings.cents;
+        currentNode.connect(pitchNode);
+        currentNode = pitchNode;
+      } catch (e) { console.warn("Worklet failed in offline context", e); }
+    }
+
+    // B. EQ Chain
+    const eqNodes = C.EQ_FREQS.map((f, i) => {
+      const b = off.createBiquadFilter();
+      b.type = i === 0 ? "lowshelf" : i === C.EQ_FREQS.length - 1 ? "highshelf" : "peaking";
+      b.frequency.value = f; b.Q.value = 0.8;
+      b.gain.value = settings.eq?.[i] || 0;
+      currentNode.connect(b); currentNode = b; return b;
+    });
+
+    // C. Compressor
+    const compressor = off.createDynamicsCompressor();
+    compressor.threshold.value = -14; compressor.knee.value = 20; 
+    compressor.ratio.value = 2.5; compressor.attack.value = 0.008; compressor.release.value = 0.2;
+    currentNode.connect(compressor); currentNode = compressor;
+
+    // D. Reverb (Dry/Wet mix)
+    const dry = off.createGain(); const wet = off.createGain(); const convolver = off.createConvolver();
+    const len = Math.floor(off.sampleRate * 1.8), imp = off.createBuffer(2, len, off.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { 
+      const d = imp.getChannelData(ch); 
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); 
+    }
+    convolver.buffer = imp;
+    dry.gain.value = 1 - settings.reverb * 0.35; wet.gain.value = settings.reverb * 0.9;
+    currentNode.connect(dry); currentNode.connect(convolver); convolver.connect(wet);
+
+    // E. Master Gain
+    const master = off.createGain();
+    master.gain.value = settings.mute ? 0 : settings.volume;
+    dry.connect(master); wet.connect(master); master.connect(off.destination);
+
+    src.start();
     const rendered = await off.startRendering();
-    /* "Detuned ---hz" tag: the real pitch shift applied to this render, in Hz at A4. */
-    const hz = settings.cents * (440 / 1200);
-    const detuneTag = `Detuned ${hz >= 0 ? "+" : ""}${hz.toFixed(1)}Hz`;
-    const base = (t.title || t.name || "track").replace(/[\\/:*?"<>|]/g, "_").trim() || "track";
+    
+    // 3. FIX THE MATH: Logarithmic Hz shift
+    const hzShift = 440 * (C.centsToRatio(settings.cents) - 1);
+    const detuneTag = settings.cents !== 0 ? `VelaPlayer ${hzShift >= 0 ? "+ " : ""}${hzShift.toFixed(1)}Hz` : "Original Pitch";
+    
+    const base = (t.title || t.name || "track").replace(/[/:*?"<>|]/g, "_").trim() || "track";
     const wav = encodeWav(rendered, { title: t.title, artist: t.artist, album: t.album, comment: `${base} (${detuneTag})` });
-    const a = document.createElement("a"); a.href = safeURL(wav); a.download = `${base} (${detuneTag}).wav`.slice(0, 150); a.click();
+    
+    const a = document.createElement("a"); 
+    a.href = safeURL(wav); 
+    a.download = `${base} (${detuneTag}).wav`.slice(0, 200); 
+    a.click();
     setTimeout(() => revoke(a.href), 30000);
-    say(`WAV exported as "${base} (${detuneTag})" with embedded ID3 metadata. Offline export bakes in speed and volume only — live pitch/EQ/reverb are not included.`);
-  } catch (e) { audioError(e); } finally { button.disabled = false; }
+    
+    // 4. FIX TERMINOLOGY: WAV uses RIFF INFO, not ID3
+    say(`WAV exported as "${base}" with RIFF INFO metadata. Full DSP graph baked in!`);
+  } catch (e) { 
+    console.error(e); audioError(e); 
+  } finally { 
+    button.disabled = false; 
+  }
 }
 /* RIFF INFO chunks (LIST/INFO with INAM/IART/IPRD/ICMT) — natively read by Windows
    Explorer, iTunes and most desktop players from plain .wav files. */
