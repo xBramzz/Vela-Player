@@ -436,7 +436,7 @@ function shRender() {
     const i0 = document.createElement("i");
     i0.className = "fa-solid fa-align-left";
     const p0 = document.createElement("p");
-    p0.textContent = "No lyrics for this track.";
+    p0.textContent = "No lyrics for this track";
     const s0 = document.createElement("span");
     s0.textContent = "Velo Player © 2026.";
     e.append(i0, p0, s0);
