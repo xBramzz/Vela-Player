@@ -521,3 +521,7 @@ html.lite .lshower-body>.lyr{filter:none!important}
 .lshower-body>.lyr{text-wrap:pretty;padding-right:12%}
 .lshower .lsh-name{letter-spacing:0}
 .lshower .lsh-sub{letter-spacing:0;color:rgba(255,255,255,.72)}
+
+.lshower-body>.lyr{font-weight:600}
+.lshower-body>.lyr{letter-spacing:-.005em}
+.lshower-body>.lyr{font-kerning:none;letter-spacing:.004em}
