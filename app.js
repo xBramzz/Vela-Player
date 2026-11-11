@@ -298,6 +298,7 @@ function applySettings() {
     ? `Vinyl mode — speed ${effRate.toFixed(3)}× carries the pitch (${settings.cents > 0 ? "+" : ""}${settings.cents}c)`
     : `Detuned mode — pitch ${settings.cents > 0 ? "+" : ""}${settings.cents}c via DSP · speed ${settings.tempo.toFixed(2)}× independent`;
   document.querySelectorAll(".eq").forEach((r, i) => { if (settings.eq[i] != null) r.value = settings.eq[i]; });
+  if (typeof syncEqUI === "function") syncEqUI();
   metaSetSoon("settings", () => settings);
 }
 
@@ -1141,5 +1142,78 @@ async function retag() {
   if (n) { scheduleRender(); const c = trackById(currentId); if (c) { $("title").textContent = c.title; $("artist").textContent = c.artist; setCover(c); updateMediaSession(c); } }
 }
 window.DetuneApp = { applySettings, computeModel: () => C.computePlayback(settings), settings, get currentId() { return currentId; }, trackById, ensureBpm, bpmCache };
+/* ------------------------------------------------------------------ graphic EQ UI & DSP Curve */
+let eqCurveQueued = false, eqScratchNodes = null;
+
+function eqScratchFilters() {
+  if (eqScratchNodes) return eqScratchNodes;
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!AC) return null;
+  const oc = new AC(1, 1, 44100); // coefficient calculator only; never rendered
+  eqScratchNodes = EQ_FREQS.map((f, i) => {
+    const b = oc.createBiquadFilter();
+    b.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking";
+    b.frequency.value = f; b.Q.value = 0.8; // matches setupAudio()
+    return b;
+  });
+  return eqScratchNodes;
+}
+
+function drawEqCurve() {
+  const cv = $("eqcurve"); if (!cv) return;
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const w = cv.clientWidth || 300, h = 140;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = h * dpr; }
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const cs = getComputedStyle(document.documentElement);
+  const bloodHi = cs.getPropertyValue("--blood-hi").trim() || "#ff3b47";
+  const edgeSoft = cs.getPropertyValue("--edge-soft").trim() || "rgba(255,110,115,.18)";
+  const midY = h / 2, SPAN = 12; // ±12 dB fills the height
+  const N = 96, freqs = new Float32Array(N);
+  for (let i = 0; i < N; i++) freqs[i] = 20 * Math.pow(1000, i / (N - 1)); // log sweep 20Hz->20kHz
+  const tot = new Float32Array(N).fill(1);
+  const nodes = eqScratchFilters();
+  if (nodes) {
+    const mag = new Float32Array(N), ph = new Float32Array(N);
+    nodes.forEach((b, i) => {
+      b.gain.value = clamp(settings.eq[i] || 0, -12, 12);
+      b.getFrequencyResponse(freqs, mag, ph);
+      for (let k = 0; k < N; k++) tot[k] *= mag[k]; // cascade
+    });
+  }
+  g.strokeStyle = edgeSoft; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, midY + .5); g.lineTo(w, midY + .5); g.stroke(); // 0dB line
+  g.strokeStyle = bloodHi; g.lineWidth = 2;
+  g.shadowColor = bloodHi; g.shadowBlur = 6;
+  g.beginPath();
+  for (let i = 0; i < N; i++) {
+    const db = 20 * Math.log10(Math.max(1e-6, tot[i]));
+    const y = midY - clamp(db, -SPAN, SPAN) / SPAN * (midY - 8);
+    const x = i / (N - 1) * w;
+    i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+  }
+  g.stroke(); g.shadowBlur = 0;
+  g.lineTo(w, midY); g.lineTo(0, midY); g.closePath();
+  g.fillStyle = bloodHi; g.globalAlpha = .12; g.fill(); g.globalAlpha = 1;
+}
+
+function queueEqCurve() {
+  if (eqCurveQueued) return; eqCurveQueued = true;
+  requestAnimationFrame(() => { eqCurveQueued = false; drawEqCurve(); });
+}
+
+function syncEqUI() {
+  document.querySelectorAll(".eq").forEach((input, i) => {
+    const v = clamp(settings.eq[i] || 0, -12, 12);
+    const freq = input.dataset.freq;
+    const out = $("eqv" + freq);
+    if (out) out.textContent = (v > 0 ? "+" : "") + v.toFixed(1);
+    const ch = input.closest(".eqch");
+    if (ch) ch.classList.toggle("active", Math.abs(v) > 0.01);
+  });
+  queueEqCurve();
+}
+
+addEventListener("resize", queueEqCurve);
 init();
 })();

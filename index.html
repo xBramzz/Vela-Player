@@ -51,7 +51,101 @@ h1{font:600 clamp(54px,9.5vw,98px)/.88 "Cormorant Garamond",Georgia,serif;letter
 
 /* ---------- glass cards with blood running down the top edge ---------- */
 .glass{position:relative;background:linear-gradient(160deg,color-mix(in srgb,var(--blood-dk) 42%,transparent),var(--glass));-webkit-backdrop-filter:blur(28px) saturate(160%);backdrop-filter:blur(28px) saturate(160%);border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 22%,transparent),0 20px 60px rgba(0,0,0,.5)}
+/* ============================================================
+   DETUNE — GRAPHIC EQUALIZER (final, overflow-fixed)
+   Requires the new markup: .eqbox / #eqcurve / .eqfaders / .eqch / .eqslot
+   ============================================================ */
 
+
+/* ============================================================
+   DETUNE — GRAPHIC EQUALIZER (v3: exact hit-boxes + auto-scale)
+   ============================================================ */
+.eqbox{
+  container-type:inline-size;
+  border:1px solid var(--edge-soft);
+  border-radius:18px;
+  overflow:hidden;
+  background:linear-gradient(180deg,rgba(0,0,0,.25),rgba(0,0,0,.08));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent);
+}
+#eqcurve{display:block;width:100%;height:140px;background:transparent}
+
+.eqfaders{
+  display:grid;
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:0;
+  padding:12px 6px 14px;
+  border-top:1px solid var(--edge-soft);
+}
+.eqch{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+.eqval{
+  font:600 11px/1 -apple-system,"SF Pro Text",system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;
+  color:var(--muted);min-width:0;text-align:center;
+  transition:color .2s,text-shadow .2s;
+}
+.eqch.active .eqval,.eqch.focused .eqval{color:var(--blood-hi);text-shadow:0 0 8px var(--glow)}
+
+/* --travel / --cross are written per-slot by syncEqGeometry().
+   The rotated input's WIDTH is its travel, its HEIGHT is its hit-width.
+   Sizing the hit-width to the column (not a fixed 44px) is what stops
+   one fader's box from covering the next fader's knob. */
+.eqslot{position:relative;width:min(44px,100%);height:150px}
+.eqslot::before{
+  content:"";position:absolute;left:50%;top:6px;bottom:6px;width:4px;
+  transform:translateX(-50%);border-radius:4px;
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--blood-hi) 35%,transparent) 0%,
+    color-mix(in srgb,var(--blood) 15%,transparent) 50%,
+    color-mix(in srgb,var(--blood-dk) 35%,transparent) 100%);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.7);
+  transition:box-shadow .2s;
+}
+.eqch.focused .eqslot::before{
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.7),0 0 10px var(--glow);
+}
+.eqdetent{
+  position:absolute;left:50%;top:50%;width:16px;height:2px;
+  transform:translate(-50%,-50%);border-radius:2px;
+  background:var(--blood-hi);opacity:.8;box-shadow:0 0 6px var(--glow);pointer-events:none;
+}
+.eqslot .eq{
+  position:absolute;left:50%;top:50%;
+  width:var(--travel,150px);
+  height:var(--cross,44px);
+  margin:0;
+  transform:translate(-50%,-50%) rotate(-90deg);
+  cursor:ns-resize;background:transparent;
+  touch-action:none;
+}
+.eqslot .eq::-webkit-slider-runnable-track{height:4px;background:transparent}
+.eqslot .eq::-moz-range-track{height:4px;background:transparent}
+.eqslot .eq::-webkit-slider-thumb{margin:0 !important}
+.eqslot .eq::-moz-range-thumb{margin:0 !important}
+.eqslot .eq:focus,.eqslot .eq:focus-visible{outline:none}
+
+.eqlabel{max-width:100%;padding:0 1px;text-align:center;min-width:0}
+.eqlabel b{display:none}
+.eqlabel small{
+  display:block;margin:0;opacity:1;color:var(--ink);
+  font:700 9px/1.25 -apple-system,"SF Pro Text",system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+  white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+}
+@container (min-width:430px){
+  .eqlabel b{
+    display:block;margin-bottom:2px;color:var(--muted);
+    font:600 9px/1.2 -apple-system,"SF Pro Text",system-ui,sans-serif;
+    letter-spacing:.02em;text-transform:uppercase;
+    white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  }
+}
+@media (max-width:420px){
+  .eqslot{height:120px;width:min(38px,100%)}
+  .eqval{font-size:10px}
+}
+/* ---- bonus one-liner: stops "-132" rendering as "-I 32" in the big readout ---- */
+.cents{font-variant-numeric:lining-nums tabular-nums}
 /* ---------- player: tombstone arch ---------- */
 .player{border-radius:34px;padding:50px 28px 28px;text-align:center;min-width:0;transition:box-shadow .6s}
 /* now a grid column card (see player.css/fit.css) — was a fixed floating bar */
@@ -232,15 +326,75 @@ input[type=checkbox]{accent-color:var(--blood);width:16px;height:16px}
 <p class="mode small" id="modeReadout">Detuned mode — pitch 0c via DSP · speed 1.00× independent</p>
 <input class="range" id="tempo" type="range" min=".5" max="2" step=".01" value="1" aria-label="Tempo multiplier">
 <label class="toggleline"><input id="link" type="checkbox"> Link pitch and speed (vinyl mode)</label></div>
-<div class="section"><h3><i class="fa-solid fa-chart-simple" aria-hidden="true"></i>Equalizer</h3><div class="eqgrid">
-<label>Bass 60<input class="range eq" data-freq="60" type="range" min="-12" max="12" value="0" aria-label="Bass 60 Hz EQ"></label>
-<label>Low mid 170<input class="range eq" data-freq="170" type="range" min="-12" max="12" value="0" aria-label="Low mid 170 Hz EQ"></label>
-<label>Mid 350<input class="range eq" data-freq="350" type="range" min="-12" max="12" value="0" aria-label="Mid 350 Hz EQ"></label>
-<label>Vocal 1k<input class="range eq" data-freq="1000" type="range" min="-12" max="12" value="0" aria-label="Vocal 1000 Hz EQ"></label>
-<label>Presence 3.5k<input class="range eq" data-freq="3500" type="range" min="-12" max="12" value="0" aria-label="Presence 3500 Hz EQ"></label>
-<label>Air 10k<input class="range eq" data-freq="10000" type="range" min="-12" max="12" value="0" aria-label="Air 10000 Hz EQ"></label></div>
-<div class="chips eqpresets"><button class="chip" data-preset="flat">Flat</button><button class="chip" data-preset="bass">Bass boost</button><button class="chip" data-preset="no-bass">No bass</button><button class="chip" data-preset="vocal">Vocal</button><button class="chip" data-preset="treble">Treble</button><button class="chip" data-preset="warm">Warm</button><button class="chip" data-preset="bright">Bright</button></div>
-<div class="fieldrow"><label for="reverb">Reverb</label><input id="reverb" class="range" type="range" min="0" max="1" step=".01" value="0" aria-label="Reverb wet mix"></div></div>
+<div class="section">
+  <h3><i class="fa-solid fa-chart-simple" aria-hidden="true"></i>Equalizer</h3>
+  <div class="eqbox">
+    <canvas id="eqcurve" height="140" aria-label="EQ response curve"></canvas>
+    <div class="eqfaders" role="group" aria-label="Six-band graphic equalizer">
+      <div class="eqch">
+        <output class="eqval" id="eqv60">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="60" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Bass 60 Hz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Bass</b><small>60 Hz</small></span>
+      </div>
+      <div class="eqch">
+        <output class="eqval" id="eqv170">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="170" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Low mid 170 Hz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Low mid</b><small>170 Hz</small></span>
+      </div>
+      <div class="eqch">
+        <output class="eqval" id="eqv350">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="350" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Mid 350 Hz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Mid</b><small>350 Hz</small></span>
+      </div>
+      <div class="eqch">
+        <output class="eqval" id="eqv1000">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="1000" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Vocal 1 kHz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Vocal</b><small>1 kHz</small></span>
+      </div>
+      <div class="eqch">
+        <output class="eqval" id="eqv3500">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="3500" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Presence 3.5 kHz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Presence</b><small>3.5 kHz</small></span>
+      </div>
+      <div class="eqch">
+        <output class="eqval" id="eqv10000">0.0</output>
+        <div class="eqslot">
+          <input class="range eq" data-freq="10000" type="range" min="-12" max="12" step="0.5" value="0" aria-label="Air 10 kHz">
+          <div class="eqdetent"></div>
+        </div>
+        <span class="eqlabel"><b>Air</b><small>10 kHz</small></span>
+      </div>
+    </div>
+  </div>
+  <div class="chips eqpresets" style="margin-top: 14px;">
+    <button class="chip" data-preset="flat">Flat</button>
+    <button class="chip" data-preset="bass">Bass boost</button>
+    <button class="chip" data-preset="no-bass">No bass</button>
+    <button class="chip" data-preset="vocal">Vocal</button>
+    <button class="chip" data-preset="treble">Treble</button>
+    <button class="chip" data-preset="warm">Warm</button>
+    <button class="chip" data-preset="bright">Bright</button>
+  </div>
+  <div class="fieldrow" style="margin-top: 14px;">
+    <label for="reverb">Reverb</label>
+    <input id="reverb" class="range" type="range" min="0" max="1" step=".01" value="0" aria-label="Reverb wet mix">
+  </div>
+</div>
 <div class="section"><h3><i class="fa-solid fa-right-left" aria-hidden="true"></i>Crossfade &amp; beatmatch</h3>
 <div class="fieldrow"><label for="xfade">Crossfade</label><input id="xfade" class="range" type="range" min="0" max="12" step="1" value="0" aria-label="Crossfade length in seconds"><span class="small unit" id="xfadeVal">off</span></div>
 <label class="toggleline"><input id="beatmatch" type="checkbox"> Auto-BPM match <span class="small" id="bpmReadout"></span></label>
