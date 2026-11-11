@@ -255,6 +255,7 @@ async function setupAudio() {
   /* publish the live graph so extras.js (lyric-shower probe) and AudioMotion can attach
      to the FINAL master output without re-calling createMediaElementSource */
   window.DetuneApp && (DetuneApp.audioGraph = { ctx, source, pitchNode, filters, compressor, master, analyser, dry, wet, convolver });
+  ensureEqSpectrum();
   applySettings();
 }
 function ramp(param, value, time = 0.05) {
@@ -268,7 +269,8 @@ function applySettings() {
   const model = C.computePlayback(settings);
   if (ctx) {
     if (pitchNode) ramp(pitchNode.parameters.get("cents"), model.workletCents, 0.03);
-    ramp(master.gain, settings.mute ? 0 : settings.volume);
+    const boostDb = Math.max(0, ...settings.eq);
+ramp(master.gain, settings.mute ? 0 : settings.volume * Math.pow(10, -boostDb / 2 / 20)); // 12 dB boost → -6 dB preamp
     ramp(wet.gain, settings.reverb * 0.9);          // true crossfade-style send/return balance
     ramp(dry.gain, 1 - settings.reverb * 0.35);
     for (let i = 0; i < filters.length; i++) ramp(filters[i].gain, settings.eq[i] || 0);
@@ -556,6 +558,7 @@ async function playTrack(id, autoplay = true) {
     console.error("Audio engine setup failed", e);
     try { source?.disconnect(); } catch { /* ignore */ }
     analyser = null;
+    destroyEqSpectrum();
     bAnalyser = null; bTapSrc = null;      /* these belonged to the closed ctx — extras.js/DetuneFX handles would be dead nodes */
     window.DetuneApp && (DetuneApp.audioGraph = null); /* stale graph handle → extras.js rebuilds its probe */
     if (ctx && ctx.state !== "closed") { try { await ctx.close(); } catch { /* ignore */ } }
@@ -1166,7 +1169,7 @@ function drawEqCurve() {
   if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = h * dpr; }
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
   const cs = getComputedStyle(document.documentElement);
-  const bloodHi = cs.getPropertyValue("--blood-hi").trim() || "#ff3b47";
+  const bloodHi = themeHi();
   const edgeSoft = cs.getPropertyValue("--edge-soft").trim() || "rgba(255,110,115,.18)";
   const midY = h / 2, SPAN = 12; // ±12 dB fills the height
   const N = 96, freqs = new Float32Array(N);
@@ -1213,7 +1216,40 @@ function syncEqUI() {
   });
   queueEqCurve();
 }
-
+/* ---- live spectrum behind the EQ curve (audioMotion-analyzer) ---- */
+let eqSpec = null;
+function destroyEqSpectrum() { try { eqSpec?.destroy(); } catch { /* ignore */ } eqSpec = null; }
+function themeHi() {
+  const cs = getComputedStyle(document.querySelector(".eqbox") || document.documentElement);
+  return cs.getPropertyValue("--blood-hi").trim() || cs.getPropertyValue("--focus").trim() || "#ff3b47";
+}
+function tintEqSpectrum() {
+  if (!eqSpec) return;
+  const hi = themeHi();
+  eqSpec.registerGradient("detune", { bgColor: "#000", colorStops: [hi, hi] });
+  eqSpec.gradient = "detune";
+}
+function ensureEqSpectrum() {
+  const host = $("eqspec");
+  if (!host || !ctx || !compressor || typeof AudioMotionAnalyzer !== "function") return;
+  destroyEqSpectrum();
+  try {
+    eqSpec = new AudioMotionAnalyzer(host, {
+      source: compressor, audioCtx: ctx, connectSpeakers: false,  // post-EQ, so faders visibly move the bars
+      mode: 10, frequencyScale: "log", minFreq: 20, maxFreq: 20000, // same 20 Hz–20 kHz log axis as the curve
+      showScaleX: false, showScaleY: false, showPeaks: false, showBgColor: false,
+      overlay: true, bgAlpha: 0, fillAlpha: .35, lineWidth: 1.5,
+      smoothing: .8, minDecibels: -85, maxDecibels: -20,
+      fftSize: document.documentElement.classList.contains("lite") ? 4096 : 8192,
+    });
+    tintEqSpectrum();
+  } catch (e) { console.warn("EQ spectrum unavailable", e); eqSpec = null; }
+}
+audio.addEventListener("play", tintEqSpectrum);
+/* double-click a fader to zero that band */
+document.querySelectorAll(".eq").forEach((elm, i) => elm.addEventListener("dblclick", () => { settings.eq[i] = 0; applySettings(); }));
+new MutationObserver(() => { tintEqSpectrum(); queueEqCurve(); })
+  .observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
 addEventListener("resize", queueEqCurve);
 init();
 })();
